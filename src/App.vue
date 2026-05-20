@@ -84,7 +84,8 @@ const handleMouseUp = () => {
 
 const getSourceUrl = (src: string) => {
   if (!src) return ''
-  const path = src.startsWith('/') ? src : `/${src}`
+  const cleanSrc = src.startsWith('/') ? src.slice(1) : src
+  const path = `${import.meta.env.BASE_URL}${cleanSrc}`
   if (path.endsWith('.webm')) {
     return path.replace('.webm', '.mp4')
   }
@@ -214,7 +215,7 @@ onMounted(() => {
 
 const fetchModels = async () => {
   try {
-    const response = await fetch('/data/models.json')
+    const response = await fetch(`${import.meta.env.BASE_URL}data/models.json`)
     const data = await response.json()
     modelsList.value = (data.models || []).map((model: any) => {
       const colors = ['38bdf8', '10b981', 'f43f5e', 'a855f7', 'f59e0b', '06b6d4', 'ec4899']
