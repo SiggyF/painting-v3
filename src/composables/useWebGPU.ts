@@ -246,7 +246,7 @@ export function useWebGPU() {
     createBindGroups();
   }
 
-  function render(params: GPUParams, persistent: boolean = false) {
+  function render(params: GPUParams) {
     if (!isInitialized.value) return;
 
     device.queue.writeBuffer(uniformBuf, 0, new Float32Array([

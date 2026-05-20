@@ -415,7 +415,7 @@ function startLoop() {
     // Upload 2D paint canvas to WebGPU
     updatePaintTexture(paintCanvas)
     
-    render(gpuParams, isPersistentSource.value)
+    render(gpuParams)
 
     // Clear 2D paint canvas if not in "Sticky" mode
     if (!isPersistentSource.value && paintCtx) {
