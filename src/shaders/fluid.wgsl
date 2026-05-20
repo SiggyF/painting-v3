@@ -9,6 +9,7 @@ struct Params {
 
 @group(0) @binding(3) var uvSampler: sampler;
 @group(0) @binding(4) var uvTex: texture_2d<f32>;
+@group(0) @binding(5) var sourceTex: texture_2d<f32>; // New: persistent source
 
 fn hash(p: vec2<f32>) -> f32 {
     var p3 = fract(vec3<f32>(p.xyx) * 0.1031);
@@ -91,6 +92,25 @@ struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) uv: v
     out.uv = pos[vi] * 0.5 + 0.5; out.uv.y = 1.0 - out.uv.y; return out;
 }
 
+// --- Source Shader (Persistent Drawing) ---
+@fragment
+fn source_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+    let uvA = vec2<f32>(uv.x * params.aspectRatio, uv.y);
+    let mpos = vec2<f32>(params.mouseX * params.aspectRatio, params.mouseY);
+    let dist = length(uvA - mpos);
+    
+    if (params.isDrawing > 0.5 && dist < params.mouseRadius) {
+        let edgeSoftness = clamp(params.mouseRadius * 10.0, 0.05, 1.0);
+        let weight = smoothstep(params.mouseRadius, params.mouseRadius * (1.0 - edgeSoftness), dist);
+        let intensity = clamp(0.0008 / params.mouseRadius, 0.02, 0.4);
+        return vec4<f32>(params.activeColor, weight * intensity);
+    }
+    
+    // We return zero because the blend state is 'ADD'. 
+    // This pass accumulates drawing over time.
+    return vec4<f32>(0.0);
+}
+
 // --- Advect Shader ---
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var prevStateTex: texture_2d<f32>;
@@ -117,28 +137,15 @@ fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     var pigment = prevState.rgb;
     var concentration = prevState.a;
 
+    // Sample from Persistent Source Texture
+    let source = textureSample(sourceTex, samp, uv);
+    if (source.a > 0.0) {
+        pigment = mix(pigment, source.rgb, source.a);
+        concentration = clamp(concentration + source.a, 0.0, 2.0);
+    }
+
     // Apply model decay (only concentration fades over time)
     concentration *= params.decay;
-
-    let dist = length(r);
-    if (params.isDrawing > 0.5 && dist < params.mouseRadius) {
-        // Sharper edge for smaller brushes
-        let edgeSoftness = clamp(params.mouseRadius * 10.0, 0.05, 1.0);
-        let weight = smoothstep(params.mouseRadius, params.mouseRadius * (1.0 - edgeSoftness), dist);
-        
-        // Intensity inversely proportional to radius (smaller = stronger)
-        // This ensures small brushes paint opaque lines almost instantly
-        let intensity = clamp(0.0008 / params.mouseRadius, 0.02, 0.4);
-
-        // Use the active color from uniforms
-        let targetColor = params.activeColor; 
-
-        // Apply pigment color directly in RGB space
-        pigment = mix(pigment, targetColor, weight);
-
-        // Gradually build up concentration
-        concentration = clamp(concentration + weight * intensity, 0.0, 2.0);
-    }
 
     // Masking using the blue channel of the UV source texture
     var sampleUV = uv;

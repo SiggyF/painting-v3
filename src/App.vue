@@ -20,7 +20,8 @@ const isShiftPressed = ref(false)
 const isHoldActive = ref(false)
 const activePalette = ref<string[]>([])
 const isColorLocked = ref(false)
-const { init, render, resize, updateUVTexture, clearTextures, updateActiveColor } = useWebGPU()
+const isPersistentSource = ref(false) // New: Sticky paint sources
+const { init, render, resize, updateUVTexture, clearTextures, clearSource, updateActiveColor } = useWebGPU()
 
 const videoElement = ref<HTMLVideoElement | null>(null)
 const imageElement = ref<HTMLImageElement | null>(null)
@@ -243,6 +244,7 @@ onMounted(() => {
         if (e.key.toLowerCase() === 'c') {
           console.log('Interaction: Clear Canvas')
           clearTextures()
+          clearSource()
         }
         if (e.key.toLowerCase() === 'p') console.log('Pause requested')
         if (e.key.toLowerCase() === 's') sidebarOpen.value = !sidebarOpen.value
@@ -324,7 +326,7 @@ function startLoop() {
       videoProgress.value = (gpuParams.time % 10.0) / 10.0 // Loop dummy progress for static images
     }
     
-    render(gpuParams)
+    render(gpuParams, isPersistentSource.value)
     animationFrameId = requestAnimationFrame(frame)
   }
   frame()
@@ -469,6 +471,19 @@ onUnmounted(() => {
                 </div>
 
                 <div v-if="activeTab === 'rendering'" class="space-y-6">
+                  <div>
+                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Source Persistence</h2>
+                    <div class="flex items-center justify-between glass-panel p-3 rounded-xl bg-white/5 border border-white/5 group hover:border-sky-500/30 transition-all cursor-pointer" @click="isPersistentSource = !isPersistentSource">
+                       <div>
+                          <p class="text-xs font-semibold text-slate-200">Sticky Paint Sources</p>
+                          <p class="text-[8px] text-slate-500 uppercase tracking-tighter">Continually pour paint from drawn paths</p>
+                       </div>
+                       <div class="w-10 h-5 rounded-full bg-slate-800 relative transition-colors" :class="isPersistentSource ? 'bg-sky-500/40' : ''">
+                          <div class="absolute top-1 left-1 w-3 h-3 rounded-full bg-slate-400 transition-all" :class="isPersistentSource ? 'left-6 bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.8)]' : ''"></div>
+                       </div>
+                    </div>
+                  </div>
+
                   <div>
                     <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Simulation Persistence</h2>
                     <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">

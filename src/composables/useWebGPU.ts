@@ -27,6 +27,7 @@ export function useWebGPU() {
   let format: GPUTextureFormat;
   let advectPipe: GPURenderPipeline;
   let renderPipe: GPURenderPipeline;
+  let sourcePipe: GPURenderPipeline; // New: pipeline for persistent sources
   let statsPipe: GPUComputePipeline;
   let sampler: GPUSampler;
   let uniformBuf: GPUBuffer;
@@ -34,11 +35,13 @@ export function useWebGPU() {
   let readBuf: GPUBuffer;
   
   let uvTex: GPUTexture;
+  let sourceTex: GPUTexture; // New: persistent source texture
   let uvSampler: GPUSampler;
 
   let textures: GPUTexture[] = [];
   let advectBGs: GPUBindGroup[] = [];
   let renderBGs: GPUBindGroup[] = [];
+  let sourceBGs: GPUBindGroup[] = []; // New: bind groups for source pass
   let statsBGs: GPUBindGroup[] = [];
   
   let frame = 0;
@@ -86,6 +89,16 @@ export function useWebGPU() {
 
       const shaderModule = device.createShaderModule({ code: fluidShaderSource });
 
+      sourcePipe = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: { module: shaderModule, entryPoint: 'vertex_main' },
+        fragment: { module: shaderModule, entryPoint: 'source_main', targets: [{ format: 'rgba16float', blend: {
+          color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+          alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }
+        } }] },
+        primitive: { topology: 'triangle-list' }
+      });
+
       advectPipe = device.createRenderPipeline({
         layout: 'auto',
         vertex: { module: shaderModule, entryPoint: 'vertex_main' },
@@ -118,12 +131,25 @@ export function useWebGPU() {
       size: [simW, simH], format: 'rgba16float',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.STORAGE_BINDING
     }));
+    sourceTex = device.createTexture({
+      size: [simW, simH], format: 'rgba16float',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST
+    });
   }
 
   function createBindGroups() {
-    advectBGs = []; renderBGs = []; statsBGs = [];
+    advectBGs = []; renderBGs = []; statsBGs = []; sourceBGs = [];
     [0, 1].forEach(i => {
       const read = i, write = (i + 1) % 2;
+      
+      sourceBGs.push(device.createBindGroup({
+        layout: sourcePipe.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: sampler },
+          { binding: 1, resource: { buffer: uniformBuf } }
+        ]
+      }));
+
       advectBGs.push(device.createBindGroup({
         layout: advectPipe.getBindGroupLayout(0),
         entries: [
@@ -131,7 +157,8 @@ export function useWebGPU() {
           { binding: 1, resource: textures[read].createView() },
           { binding: 2, resource: { buffer: uniformBuf } },
           { binding: 3, resource: uvSampler },
-          { binding: 4, resource: uvTex.createView() }
+          { binding: 4, resource: uvTex.createView() },
+          { binding: 5, resource: sourceTex.createView() } // Add sourceTex binding
         ]
       }));
       renderBGs.push(device.createBindGroup({
@@ -187,7 +214,7 @@ export function useWebGPU() {
     if (!device || !isInitialized.value) return;
     
     const commandEncoder = device.createCommandEncoder();
-    textures.forEach(texture => {
+    [...textures, sourceTex].forEach(texture => {
       const passEncoder = commandEncoder.beginRenderPass({
         colorAttachments: [{
           view: texture.createView(),
@@ -209,7 +236,7 @@ export function useWebGPU() {
     createBindGroups();
   }
 
-  function render(params: GPUParams) {
+  function render(params: GPUParams, persistent: boolean = false) {
     if (!isInitialized.value) return;
 
     device.queue.writeBuffer(uniformBuf, 0, new Float32Array([
@@ -222,6 +249,21 @@ export function useWebGPU() {
 
     const idx = frame % 2;
     const encoder = device.createCommandEncoder();
+
+    // 0. Source Pass (Draw into persistent sourceTex)
+    // If not persistent, we clear the texture first
+    const sp = encoder.beginRenderPass({ 
+      colorAttachments: [{ 
+        view: sourceTex.createView(), 
+        loadOp: persistent ? 'load' : 'clear', 
+        clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        storeOp: 'store' 
+      }] 
+    });
+    sp.setPipeline(sourcePipe); 
+    sp.setBindGroup(0, sourceBGs[idx]); 
+    sp.draw(3); 
+    sp.end();
 
     // 1. Advection Pass
     const ap = encoder.beginRenderPass({ 
@@ -269,5 +311,20 @@ export function useWebGPU() {
     return data;
   }
 
-  return { init, render, resize, getStats, updateUVTexture, clearTextures, updateActiveColor, isInitialized, error };
+  function clearSource() {
+    if (!device || !isInitialized.value) return;
+    const commandEncoder = device.createCommandEncoder();
+    const passEncoder = commandEncoder.beginRenderPass({
+      colorAttachments: [{
+        view: sourceTex.createView(),
+        loadOp: 'clear',
+        clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        storeOp: 'store',
+      }]
+    });
+    passEncoder.end();
+    device.queue.submit([commandEncoder.finish()]);
+  }
+
+  return { init, render, resize, getStats, updateUVTexture, clearTextures, clearSource, updateActiveColor, isInitialized, error };
 }
