@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, reactive, onUnmounted } from 'vue'
+import { ref, onMounted, reactive, onUnmounted, computed } from 'vue'
 import L from 'leaflet'
 import { WebGPULayer } from './utils/WebGPULayer'
 import { useWebGPU, type GPUParams } from './composables/useWebGPU'
@@ -30,6 +30,23 @@ const currentTime = ref(new Date())
 const updateTime = () => { currentTime.value = new Date() }
 let timeInterval: any = null
 
+const modelTime = computed(() => {
+  if (!selectedModel.value || !selectedModel.value.extent?.time) return currentTime.value
+  
+  const start = new Date(selectedModel.value.extent.time[0]).getTime()
+  const end = new Date(selectedModel.value.extent.time[1]).getTime()
+  
+  let progress = 0
+  if (currentSourceType.value === 'video' && videoElement.value && videoElement.value.duration > 0) {
+    progress = videoElement.value.currentTime / videoElement.value.duration
+  } else {
+    // Fallback to time-based loop (approx 10s)
+    progress = (gpuParams.time % 10.0) / 10.0
+  }
+  
+  return new Date(start + (end - start) * progress)
+})
+
 const updateMapInteraction = (drawing: boolean) => {
   const canvas = gpuLayer?.getCanvas()
   if (leafletMap && canvas) {
@@ -56,17 +73,31 @@ const toggleDrawing = () => {
   updateMapInteraction(drawingActive.value || isShiftPressed.value || isHoldActive.value)
 }
 
+let moveTimeout: any = null
+
 const handleMouseDown = (e: MouseEvent) => {
-  const drawing = drawingActive.value || isShiftPressed.value || isHoldActive.value
-  if (!drawing) return
-  gpuParams.isDrawing = 1.0
-  console.log('Interaction: Start Drawing')
-  updateMousePosition(e)
+  // Classic drag painting (if mode active)
+  if (drawingActive.value) {
+    gpuParams.isDrawing = 1.0
+    updateMousePosition(e)
+  }
 }
 
 const handleMouseMove = (e: MouseEvent) => {
-  if (gpuParams.isDrawing > 0.5) {
+  const seamless = isShiftPressed.value || isHoldActive.value
+  const drawing = drawingActive.value || seamless
+  
+  if (drawing) {
+    gpuParams.isDrawing = 1.0
     updateMousePosition(e)
+    
+    // For seamless (Shift-move / Hold-button), stop painting when movement stops
+    if (seamless) {
+      if (moveTimeout) clearTimeout(moveTimeout)
+      moveTimeout = setTimeout(() => {
+        if (!drawingActive.value) gpuParams.isDrawing = 0.0
+      }, 50)
+    }
   }
 }
 
@@ -345,10 +376,10 @@ onUnmounted(() => {
           <div class="glass-panel px-5 py-3 rounded-xl shadow-2xl ring-1 ring-white/10 flex items-center gap-4 bg-slate-900/40 backdrop-blur-md">
             <div class="text-right">
               <p class="text-[18px] font-mono font-bold text-white tracking-tighter leading-none">
-                {{ currentTime.toLocaleTimeString([], { hour12: false }) }}
+                {{ modelTime.toLocaleTimeString([], { hour12: false }) }}
               </p>
               <p class="text-[9px] uppercase tracking-[0.2em] text-sky-400/80 font-bold">
-                {{ currentTime.toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' }) }}
+                {{ modelTime.toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' }) }}
               </p>
             </div>
             <div class="w-px h-8 bg-white/10"></div>
@@ -374,8 +405,8 @@ onUnmounted(() => {
             </div>
             <div>
               <h1 class="text-sm font-bold text-white tracking-tight leading-tight">
-                <span class="hidden sm:inline">Hold <span class="text-sky-400">SHIFT</span> + DRAG to Paint</span>
-                <span class="sm:hidden">Hold <span class="text-sky-400">BUTTON</span> + DRAG to Paint</span>
+                <span class="hidden sm:inline">Hold <span class="text-sky-400">SHIFT</span> + MOVE to Paint</span>
+                <span class="sm:hidden">Hold <span class="text-sky-400">BUTTON</span> + MOVE to Paint</span>
               </h1>
               <p class="text-[9px] uppercase tracking-[0.2em] text-slate-500 font-bold mt-0.5">Hydrodynamic Flow Engine</p>
             </div>
