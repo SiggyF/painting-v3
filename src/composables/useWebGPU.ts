@@ -95,10 +95,7 @@ export function useWebGPU() {
       sourcePipe = device.createRenderPipeline({
         layout: 'auto',
         vertex: { module: shaderModule, entryPoint: 'vertex_main' },
-        fragment: { module: shaderModule, entryPoint: 'source_main', targets: [{ format: 'rgba16float', blend: {
-          color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
-          alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }
-        } }] },
+        fragment: { module: shaderModule, entryPoint: 'source_main', targets: [{ format: 'rgba16float' }] },
         primitive: { topology: 'triangle-list' }
       });
 
@@ -263,12 +260,12 @@ export function useWebGPU() {
     const idx = frame % 2;
     const encoder = device.createCommandEncoder();
 
-    // 0. Source Pass (Draw into persistent sourceTex)
-    // If not persistent, we clear the texture first
+    // 0. Source Pass (Draw current 2D paint canvas into sourceTex)
+    // The sourceTex is a high-precision representation of the paint canvas.
     const sp = encoder.beginRenderPass({ 
       colorAttachments: [{ 
         view: sourceTex.createView(), 
-        loadOp: persistent ? 'load' : 'clear', 
+        loadOp: 'clear', // We clear every frame because the 2D canvas itself holds the state
         clearValue: { r: 0, g: 0, b: 0, a: 0 },
         storeOp: 'store' 
       }] 

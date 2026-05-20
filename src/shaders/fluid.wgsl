@@ -99,9 +99,9 @@ fn source_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     // We sample from the raw 2D paint canvas (paintTex)
     let paintData = textureSample(paintTex, uvSampler, uv);
     
-    // Normalize concentration for additive blending to prevent rapid numerical overflow.
-    // We use a small factor so the sum stays stable over many frames.
-    return vec4<f32>(paintData.rgb, paintData.a * 0.01);
+    // Return the color and alpha at full intensity.
+    // The "rate" of pouring into the sea is controlled in advect_main.
+    return paintData;
 }
 
 // --- Advect Shader ---
@@ -132,9 +132,15 @@ fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 
     // Sample from Persistent Source Texture
     let source = textureSample(sourceTex, samp, uv);
-    if (source.a > 0.0) {
-        pigment = mix(pigment, source.rgb, source.a);
-        concentration = clamp(concentration + source.a, 0.0, 2.0);
+    if (source.a > 0.01) {
+        // Smoothly blend the new pigment color
+        pigment = mix(pigment, source.rgb, source.a * 0.5);
+        
+        // STABLE SATURATION MODEL:
+        // Instead of adding indefinitely (overflow), we move towards a target concentration (1.5).
+        // This ensures the simulation "fills up" but never explodes.
+        let fillRate = 0.1; 
+        concentration += (1.5 - concentration) * source.a * fillRate;
     }
 
     // Apply model decay (only concentration fades over time)
