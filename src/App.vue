@@ -470,6 +470,21 @@ onUnmounted(() => {
 
                 <div v-if="activeTab === 'rendering'" class="space-y-6">
                   <div>
+                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Simulation Persistence</h2>
+                    <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
+                      <span>Paint Decay</span>
+                      <span class="text-sky-400">{{ (gpuParams.decay * 100).toFixed(2) }}%</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      v-model.number="gpuParams.decay" 
+                      min="0.95" max="1.0" step="0.001"
+                      class="w-full"
+                    >
+                    <p class="text-[8px] text-slate-600 mt-2 italic">100% means paint never fades, creating a persistent flow source.</p>
+                  </div>
+
+                  <div>
                     <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Fluid Viscosity</h2>
                     <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
                       <span>Trail Blend</span>
