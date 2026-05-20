@@ -148,8 +148,7 @@ export function useWebGPU() {
       sourceBGs.push(device.createBindGroup({
         layout: sourcePipe.getBindGroupLayout(0),
         entries: [
-          { binding: 0, resource: sampler },
-          { binding: 2, resource: { buffer: uniformBuf } }, // Uniforms must be at 2
+          { binding: 3, resource: uvSampler }, // Must match shader binding 3
           { binding: 6, resource: paintTex.createView() }  // Raw paint canvas at 6
         ]
       }));
