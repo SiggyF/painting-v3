@@ -106,6 +106,7 @@ const toggleDrawing = () => {
 }
 
 let moveTimeout: any = null
+const lastMousePos = { x: -1, y: -1 }
 
 const drawToPaintCanvas = (nx: number, ny: number) => {
   if (!paintCtx) return
@@ -116,9 +117,22 @@ const drawToPaintCanvas = (nx: number, ny: number) => {
   const color = `rgb(${activeColor.value[0]*255}, ${activeColor.value[1]*255}, ${activeColor.value[2]*255})`
   
   paintCtx.beginPath()
-  paintCtx.arc(nx * w, ny * h, r, 0, Math.PI * 2)
-  paintCtx.fillStyle = color
-  paintCtx.fill()
+  if (lastMousePos.x !== -1) {
+    paintCtx.moveTo(lastMousePos.x * w, lastMousePos.y * h)
+    paintCtx.lineTo(nx * w, ny * h)
+    paintCtx.strokeStyle = color
+    paintCtx.lineWidth = r * 2
+    paintCtx.lineCap = 'round'
+    paintCtx.lineJoin = 'round'
+    paintCtx.stroke()
+  } else {
+    paintCtx.arc(nx * w, ny * h, r, 0, Math.PI * 2)
+    paintCtx.fillStyle = color
+    paintCtx.fill()
+  }
+  
+  lastMousePos.x = nx
+  lastMousePos.y = ny
 }
 
 const handleMouseDown = (e: MouseEvent) => {
@@ -150,9 +164,16 @@ const handleMouseMove = (e: MouseEvent) => {
     if (seamless) {
       if (moveTimeout) clearTimeout(moveTimeout)
       moveTimeout = setTimeout(() => {
-        if (!drawingActive.value) gpuParams.isDrawing = 0.0
+        if (!drawingActive.value) {
+          gpuParams.isDrawing = 0.0
+          lastMousePos.x = -1
+          lastMousePos.y = -1
+        }
       }, 50)
     }
+  } else {
+    lastMousePos.x = -1
+    lastMousePos.y = -1
   }
 }
 
@@ -179,6 +200,8 @@ const handleMouseUp = () => {
   if (gpuParams.isDrawing > 0.5) console.log('Interaction: Stop Drawing')
   gpuParams.isDrawing = 0.0
   gpuParams.mouseX = -1.0
+  lastMousePos.x = -1
+  lastMousePos.y = -1
 }
 
 const getSourceUrl = (src: string) => {
@@ -243,7 +266,7 @@ const handleModelSelect = (model: any) => {
 }
 
 const gpuParams = reactive<GPUParams>({
-  speed: 0.08,
+  speed: 0.16,
   blend: 0.04,
   time: 0.0,
   aspect: 1.0,
@@ -583,6 +606,20 @@ onUnmounted(() => {
                       class="w-full"
                     >
                     <p class="text-[8px] text-slate-600 mt-2 italic">100% means paint never fades, creating a persistent flow source.</p>
+                  </div>
+
+                  <div>
+                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Flow Velocity</h2>
+                    <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
+                      <span>Sim Speed</span>
+                      <span class="text-sky-400">{{ gpuParams.speed.toFixed(2) }}x</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      v-model.number="gpuParams.speed" 
+                      min="0.01" max="0.5" step="0.01"
+                      class="w-full"
+                    >
                   </div>
 
                   <div>
