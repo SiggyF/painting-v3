@@ -16,6 +16,8 @@ const currentVideoSrc = ref('')
 const currentImageSrc = ref('')
 const modelsList = ref<any[]>([])
 const selectedModel = ref<any>(null)
+const isShiftPressed = ref(false)
+const isHoldActive = ref(false)
 const { init, render, resize, updateUVTexture, clearTextures, updateActiveColor } = useWebGPU()
 
 const videoElement = ref<HTMLVideoElement | null>(null)
@@ -26,11 +28,10 @@ const currentTime = ref(new Date())
 const updateTime = () => { currentTime.value = new Date() }
 let timeInterval: any = null
 
-const toggleDrawing = () => {
-  drawingActive.value = !drawingActive.value
+const updateMapInteraction = (drawing: boolean) => {
   const canvas = gpuLayer?.getCanvas()
   if (leafletMap && canvas) {
-    if (drawingActive.value) {
+    if (drawing) {
       leafletMap.dragging.disable()
       leafletMap.scrollWheelZoom.disable()
       leafletMap.doubleClickZoom.disable()
@@ -48,8 +49,14 @@ const toggleDrawing = () => {
   }
 }
 
+const toggleDrawing = () => {
+  drawingActive.value = !drawingActive.value
+  updateMapInteraction(drawingActive.value || isShiftPressed.value || isHoldActive.value)
+}
+
 const handleMouseDown = (e: MouseEvent) => {
-  if (!drawingActive.value) return
+  const drawing = drawingActive.value || isShiftPressed.value || isHoldActive.value
+  if (!drawing) return
   gpuParams.isDrawing = 1.0
   console.log('Interaction: Start Drawing')
   updateMousePosition(e)
@@ -201,6 +208,10 @@ onMounted(() => {
       window.addEventListener('mouseup', handleMouseUp)
 
       window.addEventListener('keydown', (e: KeyboardEvent) => {
+        if (e.shiftKey && !isShiftPressed.value) {
+          isShiftPressed.value = true
+          updateMapInteraction(true)
+        }
         if (e.key.toLowerCase() === 'c') {
           console.log('Interaction: Clear Canvas')
           clearTextures()
@@ -208,6 +219,16 @@ onMounted(() => {
         if (e.key.toLowerCase() === 'p') console.log('Pause requested')
         if (e.key.toLowerCase() === 's') sidebarOpen.value = !sidebarOpen.value
         if (e.key.toLowerCase() === 'b') toggleDrawing()
+      })
+
+      window.addEventListener('keyup', (e: KeyboardEvent) => {
+        if (e.key === 'Shift') {
+          isShiftPressed.value = false
+          if (!drawingActive.value && !isHoldActive.value) {
+            updateMapInteraction(false)
+            gpuParams.isDrawing = 0.0
+          }
+        }
       })
     }
 
@@ -452,6 +473,23 @@ onUnmounted(() => {
             </div>
           </transition>
         </div>
+      </div>
+
+      <!-- Bottom Mobile Modifier Button -->
+      <div class="absolute bottom-10 left-10 z-30 pointer-events-auto sm:hidden">
+        <button 
+          @touchstart.prevent="isHoldActive = true; updateMapInteraction(true)"
+          @touchend.prevent="isHoldActive = false; updateMapInteraction(drawingActive); gpuParams.isDrawing = 0.0"
+          @mousedown="isHoldActive = true; updateMapInteraction(true)"
+          @mouseup="isHoldActive = false; updateMapInteraction(drawingActive); gpuParams.isDrawing = 0.0"
+          class="w-20 h-20 rounded-full glass-panel flex flex-col items-center justify-center gap-1 shadow-2xl ring-1 ring-white/20 transition-all active:scale-90 select-none"
+          :class="isHoldActive ? 'bg-sky-500/40 ring-sky-400' : 'bg-slate-900/60'"
+        >
+          <div :class="isHoldActive ? 'text-white' : 'text-sky-400'">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l7.586 7.586"></path><circle cx="11" cy="11" r="2"></circle></svg>
+          </div>
+          <span class="text-[8px] font-bold uppercase tracking-tighter" :class="isHoldActive ? 'text-white' : 'text-slate-400'">Hold to Paint</span>
+        </button>
       </div>
 
       <!-- Bottom Panel (Domain Details) -->
