@@ -18,6 +18,8 @@ const modelsList = ref<any[]>([])
 const selectedModel = ref<any>(null)
 const isShiftPressed = ref(false)
 const isHoldActive = ref(false)
+const activePalette = ref<string[]>([])
+const isColorLocked = ref(false)
 const { init, render, resize, updateUVTexture, clearTextures, updateActiveColor } = useWebGPU()
 
 const videoElement = ref<HTMLVideoElement | null>(null)
@@ -267,12 +269,22 @@ const fetchModels = async () => {
   }
 }
 
+let colorFrameCount = 0
 function startLoop() {
   const frame = () => {
     gpuParams.time += 0.01
     gpuParams.mouseDirX *= 0.9
     gpuParams.mouseDirY *= 0.9
     
+    // Auto-cycle palette if drawing and not locked to a specific color
+    if (gpuParams.isDrawing > 0.5 && activePalette.value.length > 0 && !isColorLocked.value) {
+      colorFrameCount++
+      if (colorFrameCount % 8 === 0) { // Switch every 8 frames for a "painterly" feel
+        const randomColor = activePalette.value[Math.floor(Math.random() * activePalette.value.length)]
+        updateActiveColor(randomColor)
+      }
+    }
+
     if (currentSourceType.value === 'video' && videoElement.value && videoElement.value.readyState >= 2) {
       if (videoElement.value.paused) videoElement.value.play().catch(() => {})
       updateUVTexture(videoElement.value)
@@ -338,6 +350,17 @@ onUnmounted(() => {
               <p class="text-[9px] uppercase tracking-[0.2em] text-sky-400/80 font-bold">
                 {{ currentTime.toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' }) }}
               </p>
+            </div>
+            <div class="w-px h-8 bg-white/10"></div>
+            <div class="flex flex-col gap-0.5">
+               <div class="flex gap-1 items-center">
+                  <span class="w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span class="text-[7px] font-mono text-emerald-500/80 uppercase">GPS: 53.44N, 5.68E</span>
+               </div>
+               <div class="text-[7px] font-mono text-slate-500 uppercase flex gap-2">
+                  <span>FPS: 60.0</span>
+                  <span>MS: 16.6</span>
+               </div>
             </div>
             <div class="w-px h-8 bg-white/10"></div>
             <div class="w-8 h-8 rounded-lg bg-sky-500/10 flex items-center justify-center border border-sky-500/20">
@@ -455,7 +478,10 @@ onUnmounted(() => {
 
                   <div>
                     <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Color Palette</h2>
-                    <ColorSelection @update:color="(c) => updateActiveColor(c)" />
+                    <ColorSelection 
+                      @update:color="(c) => { updateActiveColor(c); isColorLocked = true }" 
+                      @update:palette="(p) => { activePalette = p; isColorLocked = false }"
+                    />
                   </div>
                 </div>
 
