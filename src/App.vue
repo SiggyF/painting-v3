@@ -374,7 +374,7 @@ onUnmounted(() => {
       <div class="p-6 flex justify-between items-start pointer-events-none">
         <div class="flex items-start gap-4 pointer-events-auto">
           <!-- Clock Widget -->
-          <div class="glass-panel px-5 py-3 rounded-xl shadow-2xl ring-1 ring-white/10 flex items-center gap-4 bg-slate-900/40 backdrop-blur-md">
+          <div class="glass-panel p-4 rounded-xl shadow-2xl ring-1 ring-white/10 flex items-center gap-4 bg-slate-900/40 backdrop-blur-md">
             <div class="text-right">
               <p class="text-[18px] font-mono font-bold text-white tracking-tighter leading-none">
                 {{ modelTime.toLocaleTimeString([], { hour12: false }) }}
@@ -400,7 +400,8 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div class="glass-panel p-4 rounded-xl flex items-center gap-4 shadow-2xl ring-1 ring-white/10">
+          <!-- Instruction Card -->
+          <div class="glass-panel p-4 rounded-xl flex items-center gap-4 shadow-2xl ring-1 ring-white/10 bg-slate-900/40 backdrop-blur-md">
             <div class="w-8 h-8 rounded-lg bg-sky-500 flex items-center justify-center shadow-lg shadow-sky-500/20">
                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-white"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
             </div>
