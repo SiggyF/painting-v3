@@ -122,16 +122,22 @@ fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 
     let dist = length(r);
     if (params.isDrawing > 0.5 && dist < params.mouseRadius) {
-        let weight = smoothstep(params.mouseRadius, 0.0, dist);
+        // Sharper edge for smaller brushes
+        let edgeSoftness = clamp(params.mouseRadius * 10.0, 0.05, 1.0);
+        let weight = smoothstep(params.mouseRadius, params.mouseRadius * (1.0 - edgeSoftness), dist);
         
+        // Intensity inversely proportional to radius (smaller = stronger)
+        // This ensures small brushes paint opaque lines almost instantly
+        let intensity = clamp(0.0008 / params.mouseRadius, 0.02, 0.4);
+
         // Use the active color from uniforms
         let targetColor = params.activeColor; 
 
         // Apply pigment color directly in RGB space
         pigment = mix(pigment, targetColor, weight);
 
-        // Gradually build up concentration (allowing concentration > 1.0 for glowing bloom effect)
-        concentration = clamp(concentration + weight * 0.04, 0.0, 2.0);
+        // Gradually build up concentration
+        concentration = clamp(concentration + weight * intensity, 0.0, 2.0);
     }
 
     // Masking using the blue channel of the UV source texture
