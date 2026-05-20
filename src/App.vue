@@ -21,7 +21,7 @@ const isHoldActive = ref(false)
 const activePalette = ref<string[]>([])
 const isColorLocked = ref(false)
 const isPersistentSource = ref(false) // New: Sticky paint sources
-const { init, render, resize, updateUVTexture, updatePaintTexture, clearTextures, clearSource, updateActiveColor } = useWebGPU()
+const { init, render, resize, updateUVTexture, updatePaintTexture, clearTextures, clearSource, updateActiveColor, activeColor } = useWebGPU()
 
 const videoElement = ref<HTMLVideoElement | null>(null)
 const imageElement = ref<HTMLImageElement | null>(null)
@@ -108,7 +108,7 @@ const drawToPaintCanvas = (nx: number, ny: number) => {
   const h = paintCanvas.height
   const r = gpuParams.mouseRadius * w
   
-  const color = `rgb(${gpuParams.activeColor[0]*255}, ${gpuParams.activeColor[1]*255}, ${gpuParams.activeColor[2]*255})`
+  const color = `rgb(${activeColor.value[0]*255}, ${activeColor.value[1]*255}, ${activeColor.value[2]*255})`
   
   paintCtx.beginPath()
   paintCtx.arc(nx * w, ny * h, r, 0, Math.PI * 2)
@@ -537,6 +537,7 @@ onUnmounted(() => {
                   </div>
                 </div>
 
+                <div v-if="activeTab === 'rendering'" class="space-y-6">
                   <div>
                     <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Domain Actions</h2>
                     <div class="grid grid-cols-2 gap-2">

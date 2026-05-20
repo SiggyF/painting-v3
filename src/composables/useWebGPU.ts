@@ -340,5 +340,11 @@ export function useWebGPU() {
     device.queue.submit([commandEncoder.finish()]);
   }
 
-  return { init, render, resize, getStats, updateUVTexture, clearTextures, clearSource, updateActiveColor, isInitialized, error };
+  return { 
+    init, render, resize, getStats, 
+    updateUVTexture, updatePaintTexture, 
+    clearTextures, clearSource, 
+    updateActiveColor, activeColor,
+    isInitialized, error 
+  };
 }
