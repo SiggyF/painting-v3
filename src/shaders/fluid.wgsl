@@ -97,12 +97,11 @@ struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) uv: v
 @fragment
 fn source_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     // We sample from the raw 2D paint canvas (paintTex)
-    // This allows the 2D canvas to control what 'pours' into the simulation.
     let paintData = textureSample(paintTex, uvSampler, uv);
     
-    // We return the color and alpha from the paint canvas.
-    // If the 2D canvas is cleared, this will be zero.
-    return paintData;
+    // Normalize concentration for additive blending to prevent rapid numerical overflow.
+    // We use a small factor so the sum stays stable over many frames.
+    return vec4<f32>(paintData.rgb, paintData.a * 0.01);
 }
 
 // --- Advect Shader ---
