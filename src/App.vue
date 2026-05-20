@@ -18,7 +18,7 @@ const modelsList = ref<any[]>([])
 const selectedModel = ref<any>(null)
 const isShiftPressed = ref(false)
 const isHoldActive = ref(false)
-const activePalette = ref<string[]>([])
+const activePalette = ref<string[]>(['#00A0B0', '#6A4A3C', '#CC333F', '#EB6841', '#EDC951'])
 const isColorLocked = ref(false)
 const isPersistentSource = ref(false) // New: Sticky paint sources
 const { init, render, resize, updateUVTexture, updatePaintTexture, clearTextures, clearSource, updateActiveColor, activeColor } = useWebGPU()
@@ -34,6 +34,11 @@ const updateTime = () => { currentTime.value = new Date() }
 let timeInterval: any = null
 
 const videoProgress = ref(0) // Reactive progress for clock sync
+
+// Initialize active color to match Ocean Five default
+onMounted(() => {
+  updateActiveColor('#00A0B0')
+})
 
 const modelTime = computed(() => {
   if (!selectedModel.value || !selectedModel.value.extent?.time) return currentTime.value
@@ -320,9 +325,9 @@ onMounted(() => {
       resize(e.width, e.height)
       gpuParams.aspect = e.width / e.height
       
-      // Sync 2D paint canvas size
-      paintCanvas.width = e.width
-      paintCanvas.height = e.height
+      // Higher resolution for paint source (2x supersampling)
+      paintCanvas.width = e.width * 2
+      paintCanvas.height = e.height * 2
     })
   }
 })

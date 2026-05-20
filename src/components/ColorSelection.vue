@@ -19,8 +19,8 @@ const palettes = [
   { name: 'Magma', colors: ['#000004', '#1b0c41', '#4a0c6b', '#781c6d', '#a52c60', '#cf4446', '#ed6925', '#fb9b06', '#fcfdbf'] }
 ]
 
-const selectedPalette = ref(palettes[0].name)
-const selectedColor = ref(palettes[0].colors[0])
+const selectedPalette = ref('Ocean Five')
+const selectedColor = ref('#00A0B0')
 
 const emit = defineEmits(['update:palette', 'update:color'])
 
