@@ -9,7 +9,8 @@ struct Params {
 
 @group(0) @binding(3) var uvSampler: sampler;
 @group(0) @binding(4) var uvTex: texture_2d<f32>;
-@group(0) @binding(5) var sourceTex: texture_2d<f32>; // New: persistent source
+@group(0) @binding(5) var sourceTex: texture_2d<f32>; // WebGPU accumulation buffer
+@group(0) @binding(6) var paintTex: texture_2d<f32>; // New: Raw 2D paint canvas
 
 fn hash(p: vec2<f32>) -> f32 {
     var p3 = fract(vec3<f32>(p.xyx) * 0.1031);
@@ -95,20 +96,13 @@ struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) uv: v
 // --- Source Shader (Persistent Drawing) ---
 @fragment
 fn source_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
-    let uvA = vec2<f32>(uv.x * params.aspectRatio, uv.y);
-    let mpos = vec2<f32>(params.mouseX * params.aspectRatio, params.mouseY);
-    let dist = length(uvA - mpos);
+    // We sample from the raw 2D paint canvas (paintTex)
+    // This allows the 2D canvas to control what 'pours' into the simulation.
+    let paintData = textureSample(paintTex, uvSampler, uv);
     
-    if (params.isDrawing > 0.5 && dist < params.mouseRadius) {
-        let edgeSoftness = clamp(params.mouseRadius * 10.0, 0.05, 1.0);
-        let weight = smoothstep(params.mouseRadius, params.mouseRadius * (1.0 - edgeSoftness), dist);
-        let intensity = clamp(0.0008 / params.mouseRadius, 0.02, 0.4);
-        return vec4<f32>(params.activeColor, weight * intensity);
-    }
-    
-    // We return zero because the blend state is 'ADD'. 
-    // This pass accumulates drawing over time.
-    return vec4<f32>(0.0);
+    // We return the color and alpha from the paint canvas.
+    // If the 2D canvas is cleared, this will be zero.
+    return paintData;
 }
 
 // --- Advect Shader ---

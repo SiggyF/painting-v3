@@ -35,15 +35,16 @@ export function useWebGPU() {
   let readBuf: GPUBuffer;
   
   let uvTex: GPUTexture;
-  let sourceTex: GPUTexture; // New: persistent source texture
+  let sourceTex: GPUTexture; // Persistent WebGPU accumulation buffer
+  let paintTex: GPUTexture; // New: Raw texture from the 2D paint canvas
   let uvSampler: GPUSampler;
 
   let textures: GPUTexture[] = [];
   let advectBGs: GPUBindGroup[] = [];
   let renderBGs: GPUBindGroup[] = [];
-  let sourceBGs: GPUBindGroup[] = []; // New: bind groups for source pass
+  let sourceBGs: GPUBindGroup[] = [];
   let statsBGs: GPUBindGroup[] = [];
-  
+
   let frame = 0;
   let simW = 0, simH = 0;
 
@@ -73,19 +74,21 @@ export function useWebGPU() {
       sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
       uvSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
       
-      // Default empty UV texture (1x1)
-      uvTex = device.createTexture({
+      // Default empty textures
+      const emptyDesc: GPUTextureDescriptor = {
           size: [1, 1],
           format: 'rgba8unorm',
-          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
-      });
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+      };
+      uvTex = device.createTexture(emptyDesc);
+      paintTex = device.createTexture(emptyDesc);
 
       uniformBuf = device.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
       statsBuf = device.createBuffer({ size: 64, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
       readBuf = device.createBuffer({ size: 64, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
 
       createResources();
-      clearTextures(); // Added: ensure textures are empty on start
+      clearTextures();
 
       const shaderModule = device.createShaderModule({ code: fluidShaderSource });
 
@@ -146,7 +149,8 @@ export function useWebGPU() {
         layout: sourcePipe.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: sampler },
-          { binding: 1, resource: { buffer: uniformBuf } }
+          { binding: 2, resource: { buffer: uniformBuf } }, // Uniforms must be at 2
+          { binding: 6, resource: paintTex.createView() }  // Raw paint canvas at 6
         ]
       }));
 
@@ -158,7 +162,7 @@ export function useWebGPU() {
           { binding: 2, resource: { buffer: uniformBuf } },
           { binding: 3, resource: uvSampler },
           { binding: 4, resource: uvTex.createView() },
-          { binding: 5, resource: sourceTex.createView() } // Add sourceTex binding
+          { binding: 5, resource: sourceTex.createView() } 
         ]
       }));
       renderBGs.push(device.createBindGroup({
@@ -182,7 +186,6 @@ export function useWebGPU() {
   function updateUVTexture(source: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement) {
     if (!device || !isInitialized.value) return;
     
-    // Safety check for video readiness
     if (source instanceof HTMLVideoElement && source.readyState < 2) return;
 
     const width = source instanceof HTMLVideoElement ? source.videoWidth : source.width;
@@ -200,14 +203,25 @@ export function useWebGPU() {
     }
     
     try {
-      device.queue.copyExternalImageToTexture(
-          { source, flipY: false },
-          { texture: uvTex },
-          [width, height]
-      );
+      device.queue.copyExternalImageToTexture({ source, flipY: false }, { texture: uvTex }, [width, height]);
     } catch (e) {
       if (Math.random() < 0.01) console.warn('UV Texture copy failed:', e);
     }
+  }
+
+  function updatePaintTexture(source: HTMLCanvasElement) {
+    if (!device || !isInitialized.value) return;
+    const width = source.width, height = source.height;
+    if (width <= 0 || height <= 0) return;
+
+    if (paintTex.width !== width || paintTex.height !== height) {
+      paintTex = device.createTexture({
+        size: [width, height], format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+      });
+      createBindGroups();
+    }
+    device.queue.copyExternalImageToTexture({ source, flipY: false }, { texture: paintTex }, [width, height]);
   }
 
   function clearTextures() {

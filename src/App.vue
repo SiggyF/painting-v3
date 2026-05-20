@@ -21,10 +21,12 @@ const isHoldActive = ref(false)
 const activePalette = ref<string[]>([])
 const isColorLocked = ref(false)
 const isPersistentSource = ref(false) // New: Sticky paint sources
-const { init, render, resize, updateUVTexture, clearTextures, clearSource, updateActiveColor } = useWebGPU()
+const { init, render, resize, updateUVTexture, updatePaintTexture, clearTextures, clearSource, updateActiveColor } = useWebGPU()
 
 const videoElement = ref<HTMLVideoElement | null>(null)
 const imageElement = ref<HTMLImageElement | null>(null)
+const paintCanvas = document.createElement('canvas')
+const paintCtx = paintCanvas.getContext('2d')
 let leafletMap: L.Map | null = null
 
 const currentTime = ref(new Date())
@@ -64,12 +66,55 @@ const updateMapInteraction = (drawing: boolean) => {
   }
 }
 
+const addGrid = () => {
+  if (!paintCtx) return
+  const w = paintCanvas.width
+  const h = paintCanvas.height
+  const step = w / 16
+  paintCtx.strokeStyle = 'white'
+  paintCtx.lineWidth = 2
+  for (let x = 0; x <= w; x += step) {
+    paintCtx.beginPath(); paintCtx.moveTo(x, 0); paintCtx.lineTo(x, h); paintCtx.stroke()
+  }
+  for (let y = 0; y <= h; y += step) {
+    paintCtx.beginPath(); paintCtx.moveTo(0, y); paintCtx.lineTo(w, y); paintCtx.stroke()
+  }
+}
+
+const addQuivers = () => {
+  if (!paintCtx) return
+  const w = paintCanvas.width
+  const h = paintCanvas.height
+  paintCtx.fillStyle = 'white'
+  for (let i = 0; i < 200; i++) {
+    const x = Math.random() * w
+    const y = Math.random() * h
+    paintCtx.beginPath()
+    paintCtx.arc(x, y, 2, 0, Math.PI * 2)
+    paintCtx.fill()
+  }
+}
+
 const toggleDrawing = () => {
   drawingActive.value = !drawingActive.value
   updateMapInteraction(drawingActive.value || isShiftPressed.value || isHoldActive.value)
 }
 
 let moveTimeout: any = null
+
+const drawToPaintCanvas = (nx: number, ny: number) => {
+  if (!paintCtx) return
+  const w = paintCanvas.width
+  const h = paintCanvas.height
+  const r = gpuParams.mouseRadius * w
+  
+  const color = `rgb(${gpuParams.activeColor[0]*255}, ${gpuParams.activeColor[1]*255}, ${gpuParams.activeColor[2]*255})`
+  
+  paintCtx.beginPath()
+  paintCtx.arc(nx * w, ny * h, r, 0, Math.PI * 2)
+  paintCtx.fillStyle = color
+  paintCtx.fill()
+}
 
 const handleMouseDown = (e: MouseEvent) => {
   // Classic drag painting (if mode active)
@@ -86,6 +131,15 @@ const handleMouseMove = (e: MouseEvent) => {
   if (drawing) {
     gpuParams.isDrawing = 1.0
     updateMousePosition(e)
+    
+    // Draw to 2D paint canvas
+    const canvas = gpuLayer?.getCanvas()
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect()
+      const nx = (e.clientX - rect.left) / rect.width
+      const ny = (e.clientY - rect.top) / rect.height
+      drawToPaintCanvas(nx, ny)
+    }
     
     // For seamless (Shift-move / Hold-button), stop painting when movement stops
     if (seamless) {
@@ -265,6 +319,10 @@ onMounted(() => {
     gpuLayer.on('canvas-resize', (e: any) => {
       resize(e.width, e.height)
       gpuParams.aspect = e.width / e.height
+      
+      // Sync 2D paint canvas size
+      paintCanvas.width = e.width
+      paintCanvas.height = e.height
     })
   }
 })
@@ -325,8 +383,17 @@ function startLoop() {
       updateUVTexture(imageElement.value)
       videoProgress.value = (gpuParams.time % 10.0) / 10.0 // Loop dummy progress for static images
     }
+
+    // Upload 2D paint canvas to WebGPU
+    updatePaintTexture(paintCanvas)
     
     render(gpuParams, isPersistentSource.value)
+
+    // Clear 2D paint canvas if not in "Sticky" mode
+    if (!isPersistentSource.value && paintCtx) {
+      paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height)
+    }
+
     animationFrameId = requestAnimationFrame(frame)
   }
   frame()
@@ -470,7 +537,20 @@ onUnmounted(() => {
                   </div>
                 </div>
 
-                <div v-if="activeTab === 'rendering'" class="space-y-6">
+                  <div>
+                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Domain Actions</h2>
+                    <div class="grid grid-cols-2 gap-2">
+                       <button @click="addGrid" class="glass-panel py-2 rounded-lg bg-white/5 border border-white/5 text-[10px] uppercase font-bold text-slate-300 hover:bg-sky-500/20 hover:border-sky-500/50 transition-all flex items-center justify-center gap-2">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+                          Add Grid
+                       </button>
+                       <button @click="addQuivers" class="glass-panel py-2 rounded-lg bg-white/5 border border-white/5 text-[10px] uppercase font-bold text-slate-300 hover:bg-sky-500/20 hover:border-sky-500/50 transition-all flex items-center justify-center gap-2">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                          Add Quivers
+                       </button>
+                    </div>
+                  </div>
+
                   <div>
                     <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Source Persistence</h2>
                     <div class="flex items-center justify-between glass-panel p-3 rounded-xl bg-white/5 border border-white/5 group hover:border-sky-500/30 transition-all cursor-pointer" @click="isPersistentSource = !isPersistentSource">
