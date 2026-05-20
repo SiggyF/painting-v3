@@ -30,21 +30,16 @@ const currentTime = ref(new Date())
 const updateTime = () => { currentTime.value = new Date() }
 let timeInterval: any = null
 
+const videoProgress = ref(0) // Reactive progress for clock sync
+
 const modelTime = computed(() => {
   if (!selectedModel.value || !selectedModel.value.extent?.time) return currentTime.value
   
   const start = new Date(selectedModel.value.extent.time[0]).getTime()
   const end = new Date(selectedModel.value.extent.time[1]).getTime()
   
-  let progress = 0
-  if (currentSourceType.value === 'video' && videoElement.value && videoElement.value.duration > 0) {
-    progress = videoElement.value.currentTime / videoElement.value.duration
-  } else {
-    // Fallback to time-based loop (approx 10s)
-    progress = (gpuParams.time % 10.0) / 10.0
-  }
-  
-  return new Date(start + (end - start) * progress)
+  // Use the reactive videoProgress updated in the render loop
+  return new Date(start + (end - start) * videoProgress.value)
 })
 
 const updateMapInteraction = (drawing: boolean) => {
@@ -319,8 +314,14 @@ function startLoop() {
     if (currentSourceType.value === 'video' && videoElement.value && videoElement.value.readyState >= 2) {
       if (videoElement.value.paused) videoElement.value.play().catch(() => {})
       updateUVTexture(videoElement.value)
+      
+      // Update reactive progress for clock
+      if (videoElement.value.duration > 0) {
+        videoProgress.value = videoElement.value.currentTime / videoElement.value.duration
+      }
     } else if (currentSourceType.value === 'image' && imageElement.value && imageElement.value.complete) {
       updateUVTexture(imageElement.value)
+      videoProgress.value = (gpuParams.time % 10.0) / 10.0 // Loop dummy progress for static images
     }
     
     render(gpuParams)
