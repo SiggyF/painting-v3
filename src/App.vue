@@ -16,11 +16,15 @@ const currentVideoSrc = ref('')
 const currentImageSrc = ref('')
 const modelsList = ref<any[]>([])
 const selectedModel = ref<any>(null)
-const { init, render, resize, updateUVTexture, clearTextures } = useWebGPU()
+const { init, render, resize, updateUVTexture, clearTextures, updateActiveColor } = useWebGPU()
 
 const videoElement = ref<HTMLVideoElement | null>(null)
 const imageElement = ref<HTMLImageElement | null>(null)
 let leafletMap: L.Map | null = null
+
+const currentTime = ref(new Date())
+const updateTime = () => { currentTime.value = new Date() }
+let timeInterval: any = null
 
 const toggleDrawing = () => {
   drawingActive.value = !drawingActive.value
@@ -164,6 +168,7 @@ let gpuLayer: WebGPULayer | null = null
 let animationFrameId: number | null = null
 
 onMounted(() => {
+  timeInterval = setInterval(updateTime, 1000)
   if (mapContainer.value) {
     leafletMap = L.map(mapContainer.value, {
       zoomControl: false,
@@ -262,6 +267,7 @@ function startLoop() {
 
 onUnmounted(() => {
   if (animationFrameId) cancelAnimationFrame(animationFrameId)
+  if (timeInterval) clearInterval(timeInterval)
   window.removeEventListener('mousedown', handleMouseDown)
   window.removeEventListener('mousemove', handleMouseMove)
   window.removeEventListener('mouseup', handleMouseUp)
@@ -302,6 +308,22 @@ onUnmounted(() => {
       <!-- Top Header / Controls -->
       <div class="p-6 flex justify-between items-start pointer-events-none">
         <div class="flex items-start gap-4 pointer-events-auto">
+          <!-- Clock Widget -->
+          <div class="glass-panel px-5 py-3 rounded-xl shadow-2xl ring-1 ring-white/10 flex items-center gap-4 bg-slate-900/40 backdrop-blur-md">
+            <div class="text-right">
+              <p class="text-[18px] font-mono font-bold text-white tracking-tighter leading-none">
+                {{ currentTime.toLocaleTimeString([], { hour12: false }) }}
+              </p>
+              <p class="text-[9px] uppercase tracking-[0.2em] text-sky-400/80 font-bold">
+                {{ currentTime.toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' }) }}
+              </p>
+            </div>
+            <div class="w-px h-8 bg-white/10"></div>
+            <div class="w-8 h-8 rounded-lg bg-sky-500/10 flex items-center justify-center border border-sky-500/20">
+               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-sky-400"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            </div>
+          </div>
+
           <div class="glass-panel p-4 rounded-xl flex items-center gap-4 shadow-2xl ring-1 ring-white/10">
             <div class="w-8 h-8 rounded-lg bg-sky-500 flex items-center justify-center shadow-lg shadow-sky-500/20">
                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-white"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
@@ -412,7 +434,7 @@ onUnmounted(() => {
 
                   <div>
                     <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Color Palette</h2>
-                    <ColorSelection @update:palette="(p) => console.log('Palette:', p)" />
+                    <ColorSelection @update:color="(c) => updateActiveColor(c)" />
                   </div>
                 </div>
 

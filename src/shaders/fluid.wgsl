@@ -4,6 +4,7 @@ struct Params {
     noiseScale: f32, mouseX: f32, mouseY: f32, isDrawing: f32,
     mouseDirX: f32, mouseDirY: f32, uvScale: f32, flipv: f32,
     mouseRadius: f32, decay: f32, pad2: f32, pad3: f32,
+    activeColor: vec3<f32>, pad4: f32,
 };
 
 @group(0) @binding(3) var uvSampler: sampler;
@@ -123,8 +124,8 @@ fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     if (params.isDrawing > 0.5 && dist < params.mouseRadius) {
         let weight = smoothstep(params.mouseRadius, 0.0, dist);
         
-        // Use a high-contrast Red/Pink for debugging visibility
-        let targetColor = vec3<f32>(1.0, 0.1, 0.4); 
+        // Use the active color from uniforms
+        let targetColor = params.activeColor; 
 
         // Apply pigment color directly in RGB space
         pigment = mix(pigment, targetColor, weight);

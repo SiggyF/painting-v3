@@ -44,6 +44,15 @@ export function useWebGPU() {
   let frame = 0;
   let simW = 0, simH = 0;
 
+  const activeColor = ref([1.0, 0.1, 0.4]); // Default Pink
+
+  function updateActiveColor(hex: string) {
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+    activeColor.value = [r, g, b];
+  }
+
   async function init(canvas: HTMLCanvasElement) {
     try {
       if (!navigator.gpu) throw new Error("WebGPU Not Supported");
@@ -68,7 +77,7 @@ export function useWebGPU() {
           usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
       });
 
-      uniformBuf = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      uniformBuf = device.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
       statsBuf = device.createBuffer({ size: 64, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
       readBuf = device.createBuffer({ size: 64, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
 
@@ -207,7 +216,8 @@ export function useWebGPU() {
       params.speed, params.blend, params.time, params.aspect,
       params.scale, params.mouseX, params.mouseY, params.isDrawing, 
       params.mouseDirX, params.mouseDirY, params.uvScale, params.flipv,
-      params.mouseRadius, params.decay, 0.0, 0.0
+      params.mouseRadius, params.decay, 0.0, 0.0,
+      activeColor.value[0], activeColor.value[1], activeColor.value[2], 1.0 // Add color
     ]));
 
     const idx = frame % 2;
@@ -259,5 +269,5 @@ export function useWebGPU() {
     return data;
   }
 
-  return { init, render, resize, getStats, updateUVTexture, clearTextures, isInitialized, error };
+  return { init, render, resize, getStats, updateUVTexture, clearTextures, updateActiveColor, isInitialized, error };
 }
