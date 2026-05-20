@@ -373,25 +373,13 @@ onUnmounted(() => {
                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-white"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
             </div>
             <div>
-              <h1 class="text-lg font-bold text-white tracking-tight">Painting V3</h1>
-              <p class="text-[9px] uppercase tracking-[0.2em] text-sky-400/80 font-bold -mt-1">Hydrodynamic Flow Engine</p>
+              <h1 class="text-sm font-bold text-white tracking-tight leading-tight">
+                <span class="hidden sm:inline">Hold <span class="text-sky-400">SHIFT</span> + DRAG to Paint</span>
+                <span class="sm:hidden">Hold <span class="text-sky-400">BUTTON</span> + DRAG to Paint</span>
+              </h1>
+              <p class="text-[9px] uppercase tracking-[0.2em] text-slate-500 font-bold mt-0.5">Hydrodynamic Flow Engine</p>
             </div>
           </div>
-
-          <button 
-            @click="toggleDrawing"
-            class="glass-panel px-4 py-4 rounded-xl transition-all flex items-center gap-3 ring-1 ring-white/10 shadow-xl group hover:scale-105 active:scale-95"
-            :class="drawingActive ? 'bg-sky-500/20 ring-sky-500/50' : 'hover:bg-slate-800/80'"
-          >
-            <div :class="drawingActive ? 'text-sky-400' : 'text-slate-400'">
-              <svg v-if="drawingActive" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l7.586 7.586"></path><circle cx="11" cy="11" r="2"></circle></svg>
-              <svg v-else xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-            </div>
-            <div class="text-left">
-              <p class="text-[10px] font-bold uppercase tracking-widest leading-none mb-1" :class="drawingActive ? 'text-sky-400' : 'text-slate-500'">Mode</p>
-              <p class="text-xs font-semibold text-white leading-none">{{ drawingActive ? 'Brush Active' : 'Navigating Map' }}</p>
-            </div>
-          </button>
         </div>
 
         <div class="flex flex-col gap-4 items-end">
