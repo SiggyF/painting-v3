@@ -72,7 +72,7 @@ const addGrid = () => {
   const h = paintCanvas.height
   const step = w / 16
   paintCtx.strokeStyle = 'white'
-  paintCtx.lineWidth = 2
+  paintCtx.lineWidth = 0.4
   for (let x = 0; x <= w; x += step) {
     paintCtx.beginPath(); paintCtx.moveTo(x, 0); paintCtx.lineTo(x, h); paintCtx.stroke()
   }
@@ -90,7 +90,7 @@ const addQuivers = () => {
     const x = Math.random() * w
     const y = Math.random() * h
     paintCtx.beginPath()
-    paintCtx.arc(x, y, 2, 0, Math.PI * 2)
+    paintCtx.arc(x, y, 0.4, 0, Math.PI * 2)
     paintCtx.fill()
   }
 }
@@ -250,7 +250,7 @@ const gpuParams = reactive<GPUParams>({
   mouseDirY: 0.0,
   uvScale: 1.6, // Slowed down by ~5x (from 8.0)
   flipv: 1.0,
-  mouseRadius: 0.02,
+  mouseRadius: 0.005,
   decay: 0.999
 })
 
@@ -598,12 +598,12 @@ onUnmounted(() => {
                     <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Brush Settings</h2>
                     <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
                       <span>Brush Size</span>
-                      <span class="text-sky-400">{{ (gpuParams.mouseRadius * 100).toFixed(1) }}%</span>
+                      <span class="text-sky-400">{{ (gpuParams.mouseRadius * 100).toFixed(2) }}%</span>
                     </div>
                     <input 
                       type="range" 
                       v-model.number="gpuParams.mouseRadius" 
-                      min="0.002" max="0.08" step="0.002"
+                      min="0.0005" max="0.02" step="0.0005"
                       class="w-full"
                     >
                   </div>
