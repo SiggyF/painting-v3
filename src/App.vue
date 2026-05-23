@@ -6,6 +6,7 @@ import { useWebGPU, type GPUParams } from './composables/useWebGPU'
 import ModelsOverview from './components/ModelsOverview.vue'
 import ColorSelection from './components/ColorSelection.vue'
 import DrawingShortcuts from './components/DrawingShortcuts.vue'
+import ImageStamps from './components/ImageStamps.vue'
 
 const mapContainer = ref<HTMLElement | null>(null)
 const sidebarOpen = ref(true)
@@ -17,11 +18,62 @@ const currentImageSrc = ref('')
 const modelsList = ref<any[]>([])
 const selectedModel = ref<any>(null)
 const isShiftPressed = ref(false)
+const isQPressed = ref(false)
+const isGPressed = ref(false)
 const isHoldActive = ref(false)
 const activePalette = ref<string[]>(['#00A0B0', '#6A4A3C', '#CC333F', '#EB6841', '#EDC951'])
 const isColorLocked = ref(false)
 const isPersistentSource = ref(false) // New: Sticky paint sources
-const { init, render, resize, updateUVTexture, updatePaintTexture, clearTextures, clearSource, updateActiveColor, activeColor } = useWebGPU()
+const activeStampUrl = ref<string | null>(null)
+const activeStampImage = ref<HTMLImageElement | null>(null)
+
+const handleSelectStamp = (url: string) => {
+  activeStampUrl.value = url
+  const img = new Image()
+  img.crossOrigin = 'anonymous'
+  img.onload = () => {
+    activeStampImage.value = img
+  }
+  img.src = url
+}
+
+const handleClearStamp = () => {
+  activeStampUrl.value = null
+  activeStampImage.value = null
+}
+
+const handleSelectPainting = (url: string) => {
+  console.log('Throwing painting in the water:', url)
+  clearTextures()
+  clearSource()
+  if (paintCtx) {
+    paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height)
+  }
+  
+  const img = new Image()
+  img.crossOrigin = 'anonymous'
+  img.onload = () => {
+    if (paintCtx) {
+      // Draw painting onto our supersampled 2D paint canvas
+      paintCtx.drawImage(img, 0, 0, paintCanvas.width, paintCanvas.height)
+      
+      // Upload the paint canvas to WebGPU immediately
+      updatePaintTexture(paintCanvas)
+      
+      // Copy paintTex directly to simulation textures to initialize state at 100% opacity
+      loadPaintCanvasToSimulation()
+      
+      // Clear 2D paint canvas if not in "Sticky" mode so it doesn't continually add paint
+      if (!isPersistentSource.value) {
+        paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height)
+        updatePaintTexture(paintCanvas)
+      }
+    }
+  }
+  img.src = url
+}
+
+const { init, render, resize, updateUVTexture, updatePaintTexture, clearTextures, clearSource, updateActiveColor, activeColor, loadPaintCanvasToSimulation } = useWebGPU()
 
 const videoElement = ref<HTMLVideoElement | null>(null)
 const imageElement = ref<HTMLImageElement | null>(null)
@@ -90,12 +142,14 @@ const addQuivers = () => {
   if (!paintCtx) return
   const w = paintCanvas.width
   const h = paintCanvas.height
+  // Use a radius that is 5x smaller than original (0.06% of width, minimum 0.6 pixels)
+  const radius = Math.max(0.6, w * 0.0006)
   paintCtx.fillStyle = 'white'
   for (let i = 0; i < 200; i++) {
     const x = Math.random() * w
     const y = Math.random() * h
     paintCtx.beginPath()
-    paintCtx.arc(x, y, 0.4, 0, Math.PI * 2)
+    paintCtx.arc(x, y, radius, 0, Math.PI * 2)
     paintCtx.fill()
   }
 }
@@ -107,6 +161,7 @@ const toggleDrawing = () => {
 
 let moveTimeout: any = null
 const lastMousePos = { x: -1, y: -1 }
+const lastStampPos = { x: -1, y: -1 }
 
 const drawToPaintCanvas = (nx: number, ny: number) => {
   if (!paintCtx) return
@@ -135,11 +190,59 @@ const drawToPaintCanvas = (nx: number, ny: number) => {
   lastMousePos.y = ny
 }
 
+const stampImageAtMouse = (e: MouseEvent, isMove = false) => {
+  if (!paintCtx || !activeStampImage.value) return
+  const canvas = gpuLayer?.getCanvas()
+  if (!canvas) return
+  const rect = canvas.getBoundingClientRect()
+  const nx = (e.clientX - rect.left) / rect.width
+  const ny = (e.clientY - rect.top) / rect.height
+
+  const w = paintCanvas.width
+  const h = paintCanvas.height
+  
+  const stampWidth = gpuParams.mouseRadius * w * 25
+  const stampHeight = stampWidth * (activeStampImage.value.height / activeStampImage.value.width)
+  
+  if (isMove && lastStampPos.x !== -1) {
+    const dx = (nx - lastStampPos.x) * w
+    const dy = (ny - lastStampPos.y) * h
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    if (dist < stampWidth * 0.4) return
+  }
+
+  const x = nx * w - stampWidth / 2
+  const y = ny * h - stampHeight / 2
+
+  // Colorize stamp with active color using an offscreen canvas
+  const color = `rgb(${activeColor.value[0]*255}, ${activeColor.value[1]*255}, ${activeColor.value[2]*255})`
+  const sw_int = Math.ceil(stampWidth)
+  const sh_int = Math.ceil(stampHeight)
+  const offscreen = document.createElement('canvas')
+  offscreen.width = sw_int
+  offscreen.height = sh_int
+  const octx = offscreen.getContext('2d')
+  if (octx) {
+    octx.drawImage(activeStampImage.value, 0, 0, sw_int, sh_int)
+    octx.globalCompositeOperation = 'source-in'
+    octx.fillStyle = color
+    octx.fillRect(0, 0, sw_int, sh_int)
+  }
+  
+  paintCtx.drawImage(offscreen, x, y, stampWidth, stampHeight)
+  
+  lastStampPos.x = nx
+  lastStampPos.y = ny
+}
+
 const handleMouseDown = (e: MouseEvent) => {
   // Classic drag painting (if mode active)
   if (drawingActive.value) {
     gpuParams.isDrawing = 1.0
     updateMousePosition(e)
+    if (activeStampImage.value) {
+      stampImageAtMouse(e, false)
+    }
   }
 }
 
@@ -154,10 +257,14 @@ const handleMouseMove = (e: MouseEvent) => {
     // Draw to 2D paint canvas
     const canvas = gpuLayer?.getCanvas()
     if (canvas) {
-      const rect = canvas.getBoundingClientRect()
-      const nx = (e.clientX - rect.left) / rect.width
-      const ny = (e.clientY - rect.top) / rect.height
-      drawToPaintCanvas(nx, ny)
+      if (activeStampImage.value) {
+        stampImageAtMouse(e, true)
+      } else {
+        const rect = canvas.getBoundingClientRect()
+        const nx = (e.clientX - rect.left) / rect.width
+        const ny = (e.clientY - rect.top) / rect.height
+        drawToPaintCanvas(nx, ny)
+      }
     }
     
     // For seamless (Shift-move / Hold-button), stop painting when movement stops
@@ -168,12 +275,16 @@ const handleMouseMove = (e: MouseEvent) => {
           gpuParams.isDrawing = 0.0
           lastMousePos.x = -1
           lastMousePos.y = -1
+          lastStampPos.x = -1
+          lastStampPos.y = -1
         }
       }, 50)
     }
   } else {
     lastMousePos.x = -1
     lastMousePos.y = -1
+    lastStampPos.x = -1
+    lastStampPos.y = -1
   }
 }
 
@@ -202,6 +313,8 @@ const handleMouseUp = () => {
   gpuParams.mouseX = -1.0
   lastMousePos.x = -1
   lastMousePos.y = -1
+  lastStampPos.x = -1
+  lastStampPos.y = -1
 }
 
 const getSourceUrl = (src: string) => {
@@ -217,6 +330,13 @@ const getSourceUrl = (src: string) => {
 const handleModelSelect = (model: any) => {
   console.log('Selected Model:', model.title)
   selectedModel.value = model
+  
+  // Clear textures and source when switching models
+  clearTextures()
+  clearSource()
+  if (paintCtx) {
+    paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height)
+  }
   
   if (model.uniforms) {
     if (typeof model.uniforms.scale === 'number') {
@@ -267,7 +387,7 @@ const handleModelSelect = (model: any) => {
 
 const gpuParams = reactive<GPUParams>({
   speed: 0.16,
-  blend: 0.04,
+  blend: 0.5,
   time: 0.0,
   aspect: 1.0,
   scale: 4.0,
@@ -279,7 +399,8 @@ const gpuParams = reactive<GPUParams>({
   uvScale: 1.6, // Slowed down by ~5x (from 8.0)
   flipv: 1.0,
   mouseRadius: 0.005,
-  decay: 0.999
+  decay: 0.999,
+  viscosity: 0.0
 })
 
 let gpuLayer: WebGPULayer | null = null
@@ -328,6 +449,16 @@ onMounted(() => {
           clearTextures()
           clearSource()
         }
+        if (e.key.toLowerCase() === 'q') {
+          console.log('Interaction: Add Quivers')
+          isQPressed.value = true
+          addQuivers()
+        }
+        if (e.key.toLowerCase() === 'g') {
+          console.log('Interaction: Add Grid')
+          isGPressed.value = true
+          addGrid()
+        }
         if (e.key.toLowerCase() === 'p') console.log('Pause requested')
         if (e.key.toLowerCase() === 's') sidebarOpen.value = !sidebarOpen.value
         if (e.key.toLowerCase() === 'b') toggleDrawing()
@@ -340,6 +471,12 @@ onMounted(() => {
             updateMapInteraction(false)
             gpuParams.isDrawing = 0.0
           }
+        }
+        if (e.key.toLowerCase() === 'q') {
+          isQPressed.value = false
+        }
+        if (e.key.toLowerCase() === 'g') {
+          isGPressed.value = false
         }
       })
     }
@@ -389,6 +526,10 @@ function startLoop() {
     gpuParams.time += 0.01
     gpuParams.mouseDirX *= 0.9
     gpuParams.mouseDirY *= 0.9
+    
+    // Continuous pouring if keys are held down
+    if (isQPressed.value) addQuivers()
+    if (isGPressed.value) addGrid()
     
     // Auto-cycle palette if drawing and not locked to a specific color
     if (gpuParams.isDrawing > 0.5 && activePalette.value.length > 0 && !isColorLocked.value) {
@@ -609,6 +750,21 @@ onUnmounted(() => {
                   </div>
 
                   <div>
+                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Fluid Properties</h2>
+                    <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
+                      <span>Oil Viscosity</span>
+                      <span class="text-sky-400">{{ gpuParams.viscosity.toFixed(3) }}</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      v-model.number="gpuParams.viscosity" 
+                      min="0.0" max="1.0" step="0.01"
+                      class="w-full"
+                    >
+                    <p class="text-[8px] text-slate-600 mt-2 italic">Simulates surface tension and drag so the paint forms cohesive, slow-moving blobs.</p>
+                  </div>
+
+                  <div>
                     <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Flow Velocity</h2>
                     <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
                       <span>Sim Speed</span>
@@ -623,15 +779,39 @@ onUnmounted(() => {
                   </div>
 
                   <div>
-                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Fluid Viscosity</h2>
+                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Data Intensity</h2>
                     <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
-                      <span>Trail Blend</span>
-                      <span class="text-sky-400">{{ gpuParams.blend.toFixed(3) }}</span>
+                      <span>UV Scale</span>
+                      <span class="text-sky-400">{{ gpuParams.uvScale.toFixed(1) }}x</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      v-model.number="gpuParams.uvScale" 
+                      min="0.1" max="10.0" step="0.1"
+                      class="w-full"
+                    >
+                  </div>
+
+                  <div>
+                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Turbulence Dynamics</h2>
+                    <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
+                      <span>Amplitude</span>
+                      <span class="text-sky-400">{{ gpuParams.blend.toFixed(2) }}</span>
                     </div>
                     <input 
                       type="range" 
                       v-model.number="gpuParams.blend" 
-                      min="0.005" max="0.1" step="0.005"
+                      min="0.0" max="2.0" step="0.05"
+                      class="w-full"
+                    >
+                    <div class="flex justify-between text-[11px] mb-2 mt-3 text-slate-400 font-mono">
+                      <span>Scale</span>
+                      <span class="text-sky-400">{{ gpuParams.scale.toFixed(1) }}</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      v-model.number="gpuParams.scale" 
+                      min="1.0" max="20.0" step="0.1"
                       class="w-full"
                     >
                   </div>
@@ -655,6 +835,14 @@ onUnmounted(() => {
                     <ColorSelection 
                       @update:color="(c) => { updateActiveColor(c); isColorLocked = true }" 
                       @update:palette="(p) => { activePalette = p; isColorLocked = false }"
+                      @select-painting="handleSelectPainting"
+                    />
+                  </div>
+
+                  <div class="pt-4 border-t border-white/5">
+                    <ImageStamps 
+                      @select="handleSelectStamp"
+                      @clear="handleClearStamp"
                     />
                   </div>
                 </div>

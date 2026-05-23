@@ -5,7 +5,6 @@
       "abstract": "Rijkswaterstaat Operational Systems",
       "id": "3536B75C-DF01-4C13-8E78-924A17B306FD",
       "engine": "Simona",
-      "timeseries": "data/timeseries/dcsm.json",
       "uv": {
         "src": "models/movies/dcsm.mp4",
         "type": "video/mp4",
@@ -35,7 +34,6 @@
       "abstract": "wadden model",
       "id": "E719CD9A-339A-11E5-BA2D-4963B6C90E9A",
       "engine": "Delft3D-FLOW",
-      "story": "data/stories/ecomare.json",
       "uv": {
         "src": "models/movies/wadden.webm",
         "type": "video/webm",

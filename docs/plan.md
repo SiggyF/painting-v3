@@ -7,17 +7,16 @@ The goal is to modernize an existing map-based visualization application ("paint
 This plan covers the layout definition and architectural setup of the new Vue application. It involves:
 - Establishing a new project scaffolding with Vue 3, Vite, and Tailwind CSS.
 - Designing an immersive layout where the map and rendering layers occupy the full screen.
-- Replacing the persistent Vuetify sidebar with floating "glassmorphism" panels for tools, charts, and models.
+- Replacing the persistent Vuetify sidebar with floating "glassmorphism" panels for tools and models.
 - Setting up the architectural pattern to overlay a custom WebGPU context on top of a Leaflet base map to render legacy flow fields and particles with modern performance.
 
 ## Proposed Solution
 **1. Layout: Immersive Canvas with Floating Glass UI**
 - **Base Layer:** A full-screen Leaflet map component (`vue-leaflet` or vanilla Leaflet integrated into Vue 3).
 - **Visualization Overlay:** A full-screen WebGPU canvas layered securely over the map. This canvas will handle the rendering of advection flow fields, particles, and the "Pigment Flow" subtractive mixing logic from the new concept.
+- **Model Boundary Outline:** Display a thin, elegant border (e.g., via CSS styling or a synchronized vector layer) around the active simulation canvas to clearly mark the simulation bounds.
 - **UI Overlay:** A series of floating panels (`z-index` over the canvas) styled with Tailwind CSS (`backdrop-blur`, semi-transparent backgrounds).
   - *Main Control Panel (Top Right):* Collapsible model selection, color palettes, and global settings.
-  - *Timeseries / Details Panel (Bottom Right or Bottom Center):* Expanding glass panel for charts and real-time data.
-  - *Wind Rose / Story Mode (Left):* Modular floating widgets for specific data features.
 
 **2. Tech Stack: Vue 3 + Vite + Leaflet + WebGPU Overlay**
 - **Framework:** Vue 3 (Composition API) built with Vite for optimal developer experience.
@@ -38,13 +37,17 @@ This plan covers the layout definition and architectural setup of the new Vue ap
 **Phase 2: Map & Canvas Integration**
 - Integrate Leaflet as the absolute background layer.
 - Create a transparent, full-screen `<canvas>` overlay synchronized with Leaflet's coordinate system (translating lat/lng to screen space for the WebGPU layer).
+- Render a thin border showing the active model boundary.
 
 **Phase 3: WebGPU Setup**
 - Port the WebGPU initialization and shader pipeline from `painting-new` into a composable Vue utility.
 - Hook up basic interaction (mouse dragging to create pigment/flow) over the map.
+- Improve quiver point sources to scale dynamically with the canvas resolution (0.06% of width) to ensure they are visible.
+- Re-bind keyboard shortcuts from the legacy key map (`q` for adding quivers, `g` for grid, `c` for clear) and enable continuous paint pouring when `q` or `g` is held down.
+- Implement a stable anti-diffusion sharpening step to counteract bilinear advection blur.
 
 **Phase 4: Feature Migration (Mockup)**
-- Create placeholder Vue components for the old features (Models Overview, Timeseries Charts, Wind Rose, Color Selection) within the new floating glass panels.
+- Create placeholder Vue components for the old features (Models Overview, Color Selection) within the new floating glass panels.
 
 ## Verification
 - Ensure the Vite dev server runs without errors.

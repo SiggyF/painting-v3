@@ -16,6 +16,7 @@ export interface GPUParams {
   flipv: number;
   mouseRadius: number;
   decay: number;
+  viscosity: number;
 }
 
 export function useWebGPU() {
@@ -253,7 +254,7 @@ export function useWebGPU() {
       params.speed, params.blend, params.time, params.aspect,
       params.scale, params.mouseX, params.mouseY, params.isDrawing, 
       params.mouseDirX, params.mouseDirY, params.uvScale, params.flipv,
-      params.mouseRadius, params.decay, 0.0, 0.0,
+      params.mouseRadius, params.decay, params.viscosity, 0.0,
       activeColor.value[0], activeColor.value[1], activeColor.value[2], 1.0 // Add color
     ]));
 
@@ -336,11 +337,34 @@ export function useWebGPU() {
     device.queue.submit([commandEncoder.finish()]);
   }
 
+  function loadPaintCanvasToSimulation() {
+    if (!device || !isInitialized.value) return;
+    const commandEncoder = device.createCommandEncoder();
+    
+    // Render the paintTex content into both advection textures to set the initial state
+    for (let i = 0; i < 2; i++) {
+      const passEncoder = commandEncoder.beginRenderPass({
+        colorAttachments: [{
+          view: textures[i].createView(),
+          loadOp: 'clear',
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          storeOp: 'store'
+        }]
+      });
+      passEncoder.setPipeline(sourcePipe);
+      passEncoder.setBindGroup(0, sourceBGs[0]); // Uses bind group containing paintTex
+      passEncoder.draw(3);
+      passEncoder.end();
+    }
+    device.queue.submit([commandEncoder.finish()]);
+  }
+
   return { 
     init, render, resize, getStats, 
     updateUVTexture, updatePaintTexture, 
     clearTextures, clearSource, 
     updateActiveColor, activeColor,
+    loadPaintCanvasToSimulation,
     isInitialized, error 
   };
 }

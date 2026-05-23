@@ -3,7 +3,7 @@ struct Params {
     speed: f32, blend: f32, time: f32, aspectRatio: f32,
     noiseScale: f32, mouseX: f32, mouseY: f32, isDrawing: f32,
     mouseDirX: f32, mouseDirY: f32, uvScale: f32, flipv: f32,
-    mouseRadius: f32, decay: f32, pad2: f32, pad3: f32,
+    mouseRadius: f32, decay: f32, viscosity: f32, pad3: f32,
     activeColor: vec3<f32>, pad4: f32,
 };
 
@@ -57,7 +57,7 @@ fn getVelocity(uv: vec2<f32>, time: f32, p: Params) -> vec2<f32> {
     let n1_lf = noise(pn - vec2<f32>(eps, 0.0) + t);
     let vNoise = vec2<f32>(n1_up - n1_dn, -(n1_rt - n1_lf)) * 2.0;
 
-    return vVideo * p.speed + vNoise * 0.5;
+    return vVideo * p.speed + vNoise * p.blend;
 }
 
 // --- RYB Mixing (Subtractive) ---
@@ -111,6 +111,9 @@ fn source_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 
 @fragment
 fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+    // Spatially uniform viscous drag to avoid numerical checkerboard feedback loops
+    let velocityScale = 1.0 - params.viscosity * 0.85;
+
     let uvA = vec2<f32>(uv.x * params.aspectRatio, uv.y);
     var vel = getVelocity(uv, params.time, params);
 
@@ -122,13 +125,24 @@ fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     let term = (Dx * r.y - Dy * r.x) * 2.0 / 0.003;
     vel += f * vec2<f32>(Dx - r.y * term, Dy + r.x * term);
 
+    // Apply viscosity/drag scaling to the advection velocity
+    vel = vel * velocityScale;
+
     // Backwards Advection
     let prevUV = uv - vel * 0.005 * vec2<f32>(1.0 / params.aspectRatio, 1.0);
     let prevState = textureSample(prevStateTex, samp, prevUV);
-
+    
     // Read previous pigment and concentration
     var pigment = prevState.rgb;
     var concentration = prevState.a;
+
+    // Viscosity (Cohesive Decay / Surface Tension)
+    if (params.viscosity > 0.001) {
+        // Non-linear edge decay: low concentration (blurry edges) decays faster to keep the core blob sharp.
+        // This is 100% stable since it doesn't couple neighboring pixels.
+        let edgeDecay = mix(1.0, 0.94, smoothstep(0.6, 0.1, concentration));
+        concentration = concentration * mix(1.0, edgeDecay, params.viscosity);
+    }
 
     // Sample from Persistent Source Texture
     let source = textureSample(sourceTex, samp, uv);

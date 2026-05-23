@@ -22,6 +22,7 @@ export class WebGPULayer extends L.ImageOverlay {
     this._canvas = L.DomUtil.create('canvas', className) as HTMLCanvasElement;
     this._canvas.style.pointerEvents = 'none';
     this._canvas.style.mixBlendMode = 'screen';
+    this._canvas.style.outline = '1px solid rgba(56, 189, 248, 0.4)'; // Thin border for the model boundary
 
     // @ts-ignore - ImageOverlay expects this._image to point to the DOM element
     this._image = this._canvas;
@@ -39,16 +40,27 @@ export class WebGPULayer extends L.ImageOverlay {
     
     if (!this._canvas) return;
 
-    // Get the size of the canvas as positioned by Leaflet
-    const widthCss = parseInt(this._canvas.style.width || '0', 10);
-    const heightCss = parseInt(this._canvas.style.height || '0', 10);
+    // Decouple internal resolution from zoom/screen-size.
+    // Calculate a stable simulation aspect ratio and resolution (max 2048px along major axis)
+    // using the geographical coordinates of the model bounds.
+    const bounds = this.getBounds();
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+    const latHeight = ne.lat - sw.lat;
+    const lngWidth = ne.lng - sw.lng;
     
-    const dpr = window.devicePixelRatio || 1;
+    // Project aspect ratio (approximate Mercator correction at mean latitude)
+    const meanLat = ((sw.lat + ne.lat) / 2) * Math.PI / 180;
+    const aspect = latHeight > 0 ? (lngWidth * Math.cos(meanLat)) / latHeight : 1.0;
 
-    // Internal resolution with clamping to prevent exceeding GPU texture size limits
     const maxSimSize = 2048;
-    const width = Math.min(Math.round(widthCss * dpr), maxSimSize);
-    const height = Math.min(Math.round(heightCss * dpr), maxSimSize);
+    let width = maxSimSize;
+    let height = maxSimSize;
+    if (aspect >= 1.0) {
+      height = Math.max(128, Math.round(maxSimSize / aspect));
+    } else {
+      width = Math.max(128, Math.round(maxSimSize * aspect));
+    }
 
     if (width > 0 && height > 0 && (this._canvas.width !== width || this._canvas.height !== height)) {
       this._canvas.width = width;
