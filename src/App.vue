@@ -33,6 +33,8 @@ const handleSelectStamp = (url: string) => {
   img.crossOrigin = 'anonymous'
   img.onload = () => {
     activeStampImage.value = img
+    drawingActive.value = true
+    updateMapInteraction(true)
   }
   img.src = url
 }
@@ -40,6 +42,8 @@ const handleSelectStamp = (url: string) => {
 const handleClearStamp = () => {
   activeStampUrl.value = null
   activeStampImage.value = null
+  drawingActive.value = false
+  updateMapInteraction(false)
 }
 
 const handleSelectPainting = (url: string) => {
@@ -142,8 +146,8 @@ const addQuivers = () => {
   if (!paintCtx) return
   const w = paintCanvas.width
   const h = paintCanvas.height
-  // Use a radius that is 5x smaller than original (0.06% of width, minimum 0.6 pixels)
-  const radius = Math.max(0.6, w * 0.0006)
+  // Use a radius that is 50% larger (0.09% of width, minimum 0.9 pixels) to make quivers visible in non-sticky mode
+  const radius = Math.max(0.9, w * 0.0009)
   paintCtx.fillStyle = 'white'
   for (let i = 0; i < 200; i++) {
     const x = Math.random() * w
@@ -337,6 +341,7 @@ const handleModelSelect = (model: any) => {
   if (paintCtx) {
     paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height)
   }
+  gpuParams.analytical = model.engine === 'analytical' ? 1.0 : 0.0
   
   if (model.uniforms) {
     if (typeof model.uniforms.scale === 'number') {
@@ -400,7 +405,9 @@ const gpuParams = reactive<GPUParams>({
   flipv: 1.0,
   mouseRadius: 0.005,
   decay: 0.999,
-  viscosity: 0.0
+  viscosity: 0.0,
+  scheme: 0.0,
+  analytical: 0.0
 })
 
 let gpuLayer: WebGPULayer | null = null
@@ -844,6 +851,17 @@ onUnmounted(() => {
                       @select="handleSelectStamp"
                       @clear="handleClearStamp"
                     />
+                  </div>
+
+                  <div class="pt-4 border-t border-white/5 flex flex-col gap-2">
+                    <a 
+                      href="./schemes.html" 
+                      target="_blank"
+                      class="glass-panel py-3 rounded-lg bg-sky-500/10 border border-sky-500/20 text-[10px] uppercase font-bold text-sky-400 hover:bg-sky-500/20 hover:text-white transition-all flex items-center justify-center gap-2 text-center pointer-events-auto"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                      Compare Numerical Schemes
+                    </a>
                   </div>
                 </div>
 

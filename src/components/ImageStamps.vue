@@ -66,6 +66,9 @@ const clearStamp = () => {
        <div>
          <p class="text-[9px] font-bold uppercase tracking-widest text-sky-400 leading-none mb-1">Active Stamp</p>
          <p class="text-xs font-semibold text-white leading-none">{{ selectedStamp.name }}</p>
+         <p class="text-[8px] text-emerald-400 font-bold uppercase tracking-wider mt-1.5 animate-pulse">
+           Drag on map to paint
+         </p>
        </div>
     </div>
 

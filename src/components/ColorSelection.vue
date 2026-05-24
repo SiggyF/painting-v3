@@ -96,13 +96,17 @@ onMounted(async () => {
         active: true
       }))
     }))
-    if (paintings.value.length > 0) {
-      selectPainting(paintings.value[0])
-    }
   } catch (err) {
     console.error('Error loading paintings.json:', err)
   }
 })
+
+const setActiveTab = (tab: 'standard' | 'paintings') => {
+  activeTab.value = tab
+  if (tab === 'paintings' && !selectedPainting.value && paintings.value.length > 0) {
+    selectPainting(paintings.value[0])
+  }
+}
 
 const selectStandardPalette = (p: StandardPalette) => {
   selectedPaletteName.value = p.name
@@ -170,14 +174,14 @@ const deselectAllPaintingColors = () => {
     <!-- Tabs -->
     <div class="flex rounded-lg bg-slate-900/60 p-1 ring-1 ring-white/10">
       <button 
-        @click="activeTab = 'standard'"
+        @click="setActiveTab('standard')"
         class="flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all"
         :class="activeTab === 'standard' ? 'bg-sky-500/20 text-sky-400 ring-1 ring-sky-500/30' : 'text-slate-400 hover:text-slate-200'"
       >
         Palettes
       </button>
       <button 
-        @click="activeTab = 'paintings'"
+        @click="setActiveTab('paintings')"
         class="flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all"
         :class="activeTab === 'paintings' ? 'bg-sky-500/20 text-sky-400 ring-1 ring-sky-500/30' : 'text-slate-400 hover:text-slate-200'"
       >
