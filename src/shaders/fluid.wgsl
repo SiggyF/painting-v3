@@ -3,8 +3,8 @@ struct Params {
     speed: f32, blend: f32, time: f32, aspectRatio: f32,
     noiseScale: f32, mouseX: f32, mouseY: f32, isDrawing: f32,
     mouseDirX: f32, mouseDirY: f32, uvScale: f32, flipv: f32,
-    mouseRadius: f32, decay: f32, viscosity: f32, pad3: f32,
-    activeColor: vec3<f32>, pad4: f32,
+    mouseRadius: f32, decay: f32, viscosity: f32, scheme: f32,
+    activeColor: vec3<f32>, analytical: f32,
 };
 
 @group(0) @binding(3) var uvSampler: sampler;
@@ -35,16 +35,26 @@ fn noise(p: vec2<f32>) -> f32 {
 }
 
 fn getVelocity(uv: vec2<f32>, time: f32, p: Params) -> vec2<f32> {
-    // 1. Sample from Video UV Texture
-    var sampleUV = uv;
-    if (p.flipv > 0.5) {
-        sampleUV.y = 1.0 - sampleUV.y;
-    }
+    var vBase: vec2<f32>;
     
-    let uvData = textureSample(uvTex, uvSampler, sampleUV).rg;
-    var vVideo = (uvData - 0.5) * p.uvScale;
-    if (p.flipv > 0.5) {
-        vVideo.y = -vVideo.y;
+    if (p.analytical > 0.5) {
+        // Analytical circular flow centered around (0.5, 0.5)
+        let r = uv - vec2<f32>(0.5, 0.5);
+        // Counter-clockwise rotation vortex
+        vBase = vec2<f32>(-r.y, r.x) * p.uvScale;
+    } else {
+        // 1. Sample from Video/Image UV Texture
+        var sampleUV = uv;
+        if (p.flipv > 0.5) {
+            sampleUV.y = 1.0 - sampleUV.y;
+        }
+        
+        let uvData = textureSample(uvTex, uvSampler, sampleUV).rg;
+        var vVideo = (uvData - 0.5) * p.uvScale;
+        if (p.flipv > 0.5) {
+            vVideo.y = -vVideo.y;
+        }
+        vBase = vVideo;
     }
 
     // 2. Add some noise for detail
@@ -57,7 +67,7 @@ fn getVelocity(uv: vec2<f32>, time: f32, p: Params) -> vec2<f32> {
     let n1_lf = noise(pn - vec2<f32>(eps, 0.0) + t);
     let vNoise = vec2<f32>(n1_up - n1_dn, -(n1_rt - n1_lf)) * 2.0;
 
-    return vVideo * p.speed + vNoise * p.blend;
+    return vBase * p.speed + vNoise * p.blend;
 }
 
 // --- RYB Mixing (Subtractive) ---
@@ -109,6 +119,12 @@ fn source_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 @group(0) @binding(1) var prevStateTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> params: Params;
 
+// ADVECTION_SOLVER_START
+fn sampleAdvection(uv: vec2<f32>, prevUV: vec2<f32>, vel: vec2<f32>) -> vec4<f32> {
+    return textureSample(prevStateTex, samp, prevUV);
+}
+// ADVECTION_SOLVER_END
+
 @fragment
 fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     // Spatially uniform viscous drag to avoid numerical checkerboard feedback loops
@@ -130,7 +146,7 @@ fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 
     // Backwards Advection
     let prevUV = uv - vel * 0.005 * vec2<f32>(1.0 / params.aspectRatio, 1.0);
-    let prevState = textureSample(prevStateTex, samp, prevUV);
+    let prevState = sampleAdvection(uv, prevUV, vel);
     
     // Read previous pigment and concentration
     var pigment = prevState.rgb;
@@ -153,7 +169,7 @@ fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
         // STABLE SATURATION MODEL:
         // Instead of adding indefinitely (overflow), we move towards a target concentration (1.5).
         // This ensures the simulation "fills up" but never explodes.
-        let fillRate = 0.1; 
+        let fillRate = 0.8; 
         concentration += (1.5 - concentration) * source.a * fillRate;
     }
 
@@ -170,7 +186,7 @@ fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
-    return vec4<f32>(pigment, concentration);
+    return vec4<f32>(clamp(pigment, vec3<f32>(0.0), vec3<f32>(1.0)), clamp(concentration, 0.0, 2.0));
 }
 
 // --- Render Shader ---
@@ -193,7 +209,7 @@ fn render_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     // High-tech Screen Blending glow effect
     let bg = streakColor * streakAlpha;
     let fg = pigmentColor * pigmentOpacity;
-    let finalRGB = bg + fg - bg * fg;
+    let finalRGB = clamp(bg + fg - bg * fg, vec3<f32>(0.0), vec3<f32>(1.0));
 
     let finalA = max(streakAlpha, pigmentOpacity);
     return vec4<f32>(finalRGB, clamp(finalA, 0.0, 1.0));
@@ -212,7 +228,7 @@ fn stats_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoc
     }
     workgroupBarrier();
 
-    let dim = textureDimensions(statsTex);
+    let dim = textureDimensions(statsTex, 0u);
     if (id.x < dim.x && id.y < dim.y) {
         let p = textureLoad(statsTex, id.xy, 0);
         // Fixed point conversion for atomics
