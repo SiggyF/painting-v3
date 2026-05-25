@@ -38,10 +38,20 @@ fn getVelocity(uv: vec2<f32>, time: f32, p: Params) -> vec2<f32> {
     var vBase: vec2<f32>;
     
     if (p.analytical > 0.5) {
-        // Analytical circular flow centered around (0.5, 0.5)
-        let r = uv - vec2<f32>(0.5, 0.5);
-        // Counter-clockwise rotation vortex
-        vBase = vec2<f32>(-r.y, r.x) * p.uvScale;
+        if (p.analytical < 1.5) {
+            // Analytical circular flow centered around (0.5, 0.5)
+            let r = uv - vec2<f32>(0.5, 0.5);
+            // Counter-clockwise rotation vortex
+            vBase = vec2<f32>(-r.y, r.x) * p.uvScale;
+        } else if (p.analytical < 2.5) {
+            // Horizontal flow (u=1, v=0)
+            vBase = vec2<f32>(1.0, 0.0) * p.uvScale;
+        } else {
+            // Diagonal back and forth flow (u=1, v=1 reversing every 100 timesteps/1.0 time units)
+            let cycle = u32(floor(time));
+            let direction = 1.0 - 2.0 * f32(cycle % 2u);
+            vBase = vec2<f32>(direction, direction) * p.uvScale;
+        }
     } else {
         // 1. Sample from Video/Image UV Texture
         var sampleUV = uv;
@@ -67,7 +77,11 @@ fn getVelocity(uv: vec2<f32>, time: f32, p: Params) -> vec2<f32> {
     let n1_lf = noise(pn - vec2<f32>(eps, 0.0) + t);
     let vNoise = vec2<f32>(n1_up - n1_dn, -(n1_rt - n1_lf)) * 2.0;
 
-    return vBase * p.speed + vNoise * p.blend;
+    if (p.analytical > 0.5) {
+        return vBase * p.speed;
+    } else {
+        return vBase * p.speed + vNoise * p.blend;
+    }
 }
 
 // --- RYB Mixing (Subtractive) ---
@@ -195,12 +209,24 @@ fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 fn render_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     let s = textureSample(stateTex, samp, uv);
 
+    var sampleUV = uv;
+    if (params.flipv > 0.5) {
+        sampleUV.y = 1.0 - sampleUV.y;
+    }
+    let mask = textureSample(uvTex, uvSampler, sampleUV).b;
+    if (mask > 0.01) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
     // Background flow visualization (Subtle streaks using coordinate and time noise)
     let uvA = vec2<f32>(uv.x * params.aspectRatio, uv.y);
     let streakNoise = noise(uvA * 20.0 + params.time * 0.1);
     let flowLum = smoothstep(0.4, 0.6, streakNoise);
     let streakColor = vec3<f32>(0.4, 0.6, 1.0); // Light blue streaks
-    let streakAlpha = flowLum * 0.15; // Very subtle
+    var streakAlpha = flowLum * 0.15; // Very subtle
+    if (params.analytical > 0.5) {
+        streakAlpha = 0.0;
+    }
 
     // Render Pigment
     let pigmentColor = s.rgb;

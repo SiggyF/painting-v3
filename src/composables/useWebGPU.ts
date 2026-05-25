@@ -131,7 +131,7 @@ export function useWebGPU() {
   function createResources() {
     textures = [0, 1].map(() => device.createTexture({
       size: [simW, simH], format: 'rgba16float',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.STORAGE_BINDING
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC
     }));
     sourceTex = device.createTexture({
       size: [simW, simH], format: 'rgba16float',
@@ -188,7 +188,9 @@ export function useWebGPU() {
         entries: [
           { binding: 0, resource: sampler },
           { binding: 1, resource: textures[write].createView() },
-          { binding: 2, resource: { buffer: uniformBuf } }
+          { binding: 2, resource: { buffer: uniformBuf } },
+          { binding: 3, resource: uvSampler },
+          { binding: 4, resource: uvTex.createView() }
         ]
       }));
       statsBGs.push(device.createBindGroup({
@@ -272,6 +274,7 @@ export function useWebGPU() {
 
   function resize(width: number, height: number) {
     if (!isInitialized.value) return;
+    if (width <= 0 || height <= 0) return;
     simW = width;
     simH = height;
     createResources();
@@ -369,6 +372,70 @@ export function useWebGPU() {
 
     device.queue.submit([encoder.finish()]);
     frame++;
+  }
+
+  async function countBluePixels() {
+    if (!device || !isInitialized.value) return 0;
+    
+    const read = frame % 2;
+    const bytesPerPixel = 8; // RGBA16Float = 4 channels * 2 bytes = 8 bytes
+    const bytesPerRow = simW * bytesPerPixel;
+    const bytesPerRowAligned = Math.ceil(bytesPerRow / 256) * 256;
+    const bufferSize = bytesPerRowAligned * simH;
+    
+    // Create temporary staging buffer
+    const readBuffer = device.createBuffer({
+      size: bufferSize,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+    });
+    
+    const commandEncoder = device.createCommandEncoder();
+    commandEncoder.copyTextureToBuffer(
+      { texture: textures[read] },
+      { buffer: readBuffer, bytesPerRow: bytesPerRowAligned },
+      [simW, simH, 1]
+    );
+    device.queue.submit([commandEncoder.finish()]);
+    
+    await readBuffer.mapAsync(GPUMapMode.READ);
+    const arrayBuffer = readBuffer.getMappedRange();
+    const view = new DataView(arrayBuffer);
+    
+    let bluePixels = 0;
+    
+    // Helper to decode float16 values from uint16 raw bits
+    function decodeFloat16(binary: number) {
+      const exponent = (binary & 0x7c00) >> 10;
+      const fraction = binary & 0x03ff;
+      const sign = (binary >> 15 !== 0) ? -1 : 1;
+      if (exponent === 0) {
+        return sign * Math.pow(2, -14) * (fraction / 1024);
+      } else if (exponent === 31) {
+        return fraction !== 0 ? NaN : sign * Infinity;
+      }
+      return sign * Math.pow(2, exponent - 15) * (1 + fraction / 1024);
+    }
+    
+    for (let y = 0; y < simH; y++) {
+      const rowOffset = y * bytesPerRowAligned;
+      for (let x = 0; x < simW; x++) {
+        const offset = rowOffset + x * bytesPerPixel;
+        const r = decodeFloat16(view.getUint16(offset, true));
+        const g = decodeFloat16(view.getUint16(offset + 2, true));
+        const b = decodeFloat16(view.getUint16(offset + 4, true));
+        
+        // A pixel is "blue-dominant" if Blue channel is strictly greater than Red and Green, and has a minimum threshold
+        if (b > r && b > g && b > 0.05) {
+          bluePixels++;
+        }
+      }
+    }
+    
+    readBuffer.unmap();
+    readBuffer.destroy();
+    
+    console.log(`[WebGPU] Blue-dominant pixels: ${bluePixels} / ${simW * simH}`);
+    return bluePixels;
   }
 
   async function getStats() {
@@ -476,6 +543,7 @@ export function useWebGPU() {
     updateActiveColor, activeColor,
     loadPaintCanvasToSimulation,
     compileAdvectPipeline,
+    countBluePixels,
     isInitialized, error 
   };
 }

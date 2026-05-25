@@ -1,5 +1,16 @@
 import './style.css'
 import { useWebGPU } from './composables/useWebGPU'
+import maccormackPredictor from './shaders/maccormack_predictor.wgsl?raw';
+import maccormackCorrector from './shaders/maccormack_corrector.wgsl?raw';
+import bfeccPredictor from './shaders/bfecc_predictor.wgsl?raw';
+import bfeccCorrector from './shaders/bfecc_corrector.wgsl?raw';
+import rk4MaccormackPredictor from './shaders/rk4_maccormack_predictor.wgsl?raw';
+import rk4MaccormackCorrector from './shaders/rk4_maccormack_corrector.wgsl?raw';
+import tvdPredictor from './shaders/tvd_predictor.wgsl?raw';
+import tvdCorrector from './shaders/tvd_corrector.wgsl?raw';
+import advectionTemplateSource from './shaders/advection_template.wgsl?raw';
+import bicubicSource from './shaders/bicubic.wgsl?raw';
+import bilinearSource from './shaders/bilinear.wgsl?raw';
 
 // Retrieve DOM elements
 const canvasA = document.getElementById('canvas-a') as HTMLCanvasElement;
@@ -23,6 +34,7 @@ const labelViscosity = document.getElementById('label-viscosity') as HTMLSpanEle
 
 const btnGrid = document.getElementById('btn-grid') as HTMLButtonElement;
 const btnQuivers = document.getElementById('btn-quivers') as HTMLButtonElement;
+const btnSlotted = document.getElementById('btn-slotted') as HTMLButtonElement;
 const btnClear = document.getElementById('btn-clear') as HTMLButtonElement;
 
 const statsA = document.getElementById('stats-a') as HTMLDivElement;
@@ -36,368 +48,22 @@ const simB = useWebGPU();
 const paintCanvas = document.createElement('canvas');
 const paintCtx = paintCanvas.getContext('2d')!;
 
-// Preset advection algorithms code
+function buildAdvectPreset(config: {
+  predictorAdvect: string;
+  correctorBody: string;
+}) {
+  return advectionTemplateSource
+    .replace('__PREDICTOR_ADVECT__', config.predictorAdvect)
+    .replace('__CORRECTOR_BODY__', config.correctorBody);
+}
+
 const presets: Record<string, string> = {
-  'mac-cormack': `fn sampleAdvection(uv: vec2<f32>, prevUV: vec2<f32>, vel: vec2<f32>) -> vec4<f32> {
-    // PASS 1: Predictor advects prevStateTex backward
-    return textureSample(prevStateTex, samp, prevUV);
-}
-
-@group(0) @binding(7) var origStateTex: texture_2d<f32>;
-
-@fragment
-fn advect_main2(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
-    let velocityScale = 1.0 - params.viscosity * 0.85;
-    let aspect = vec2<f32>(1.0 / params.aspectRatio, 1.0);
-    
-    var vel = getVelocity(uv, params.time, params) * velocityScale;
-    let prevUV = uv - vel * 0.005 * aspect;
-    
-    // 1. Predictor value fp (from tempTex at uv)
-    let fp = textureSample(prevStateTex, samp, uv);
-    
-    // 2. Corrector step (Project forward from prevUV using velocity at prevUV)
-    let vel_back = getVelocity(prevUV, params.time, params) * velocityScale;
-    let forwardUV = prevUV + vel_back * 0.005 * aspect;
-    
-    // Sample predicted state tempTex at forwardUV
-    let fc = textureSample(prevStateTex, samp, forwardUV);
-    
-    // 3. Original state f_curr at uv
-    let f_curr = textureSample(origStateTex, samp, uv);
-    
-    // Smoothly fade out correction term near domain boundaries and masks to prevent artifacts
-    let edgeDist = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
-    let edgeDistPrev = min(min(prevUV.x, 1.0 - prevUV.x), min(prevUV.y, 1.0 - prevUV.y));
-    let edgeDistFwd = min(min(forwardUV.x, 1.0 - forwardUV.x), min(forwardUV.y, 1.0 - forwardUV.y));
-    let boundaryDist = min(edgeDist, min(edgeDistPrev, edgeDistFwd));
-    let boundaryFade = smoothstep(0.0, 0.02, boundaryDist);
-
-    var sampleUV_curr = uv;
-    var sampleUV_prev = prevUV;
-    var sampleUV_fwd = forwardUV;
-    if (params.flipv > 0.5) {
-        sampleUV_curr.y = 1.0 - sampleUV_curr.y;
-        sampleUV_prev.y = 1.0 - sampleUV_prev.y;
-        sampleUV_fwd.y = 1.0 - sampleUV_fwd.y;
-    }
-    let mask_curr = textureSample(uvTex, uvSampler, sampleUV_curr).b;
-    let mask_prev = textureSample(uvTex, uvSampler, sampleUV_prev).b;
-    let mask_fwd = textureSample(uvTex, uvSampler, sampleUV_fwd).b;
-    let maskFade = clamp(1.0 - max(mask_curr, max(mask_prev, mask_fwd)) * 10.0, 0.0, 1.0);
-
-    let fade = boundaryFade * maskFade;
-    var f_final = fp + 0.5 * (f_curr - fc) * fade;
-    
-    // 4. Point-sampled clamping bounds from the original state around prevUV
-    let texSize = vec2<f32>(textureDimensions(origStateTex, 0u));
-    let sizeI = vec2<i32>(texSize);
-    let tc = prevUV * texSize - 0.5;
-    let tc_floor = clamp(vec2<i32>(floor(tc)), vec2<i32>(0), sizeI - vec2<i32>(2));
-    
-    let c0 = textureLoad(origStateTex, tc_floor, 0);
-    let c1 = textureLoad(origStateTex, tc_floor + vec2<i32>(1, 0), 0);
-    let c2 = textureLoad(origStateTex, tc_floor + vec2<i32>(0, 1), 0);
-    let c3 = textureLoad(origStateTex, tc_floor + vec2<i32>(1, 1), 0);
-    
-    let minVal = min(c0, min(c1, min(c2, c3)));
-    let maxVal = max(c0, max(c1, max(c2, c3)));
-    
-    f_final = clamp(f_final, minVal, maxVal);
-    
-    var pigment = clamp(f_final.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    var concentration = clamp(f_final.a, 0.0, 2.0);
-    
-    if (params.viscosity > 0.001) {
-        let edgeDecay = mix(1.0, 0.94, smoothstep(0.6, 0.1, concentration));
-        concentration = concentration * mix(1.0, edgeDecay, params.viscosity);
-    }
-    
-    let source = textureSample(sourceTex, samp, uv);
-    if (source.a > 0.01) {
-        pigment = mix(pigment, source.rgb, source.a * 0.5);
-        let fillRate = 0.8;
-        concentration += (1.5 - concentration) * source.a * fillRate;
-    }
-    
-    concentration *= params.decay;
-    
-    var sampleUV = uv;
-    if (params.flipv > 0.5) {
-        sampleUV.y = 1.0 - sampleUV.y;
-    }
-    let mask = textureSample(uvTex, uvSampler, sampleUV).b;
-    if (mask > 0.01) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-    
-    return vec4<f32>(pigment, concentration);
-}`,
-
-  'bfecc': `fn sampleAdvection(uv: vec2<f32>, prevUV: vec2<f32>, vel: vec2<f32>) -> vec4<f32> {
-    // PASS 1: Predictor advects prevStateTex backward
-    return textureSample(prevStateTex, samp, prevUV);
-}
-
-@group(0) @binding(7) var origStateTex: texture_2d<f32>;
-
-@fragment
-fn advect_main2(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
-    let velocityScale = 1.0 - params.viscosity * 0.85;
-    let aspect = vec2<f32>(1.0 / params.aspectRatio, 1.0);
-    
-    var vel = getVelocity(uv, params.time, params) * velocityScale;
-    let prevUV = uv - vel * 0.005 * aspect;
-    
-    // 1. Predictor value fp (from tempTex at uv)
-    let fp = textureSample(prevStateTex, samp, uv);
-    
-    // 2. Corrector step (Project forward from prevUV using velocity at prevUV)
-    let vel_back = getVelocity(prevUV, params.time, params) * velocityScale;
-    let forwardUV = prevUV + vel_back * 0.005 * aspect;
-    
-    // Sample predicted state tempTex at forwardUV
-    let fc = textureSample(prevStateTex, samp, forwardUV);
-    
-    // 3. Original state f_curr at uv
-    let f_curr = textureSample(origStateTex, samp, uv);
-    
-    // Smoothly fade out correction term near domain boundaries and masks to prevent artifacts
-    let edgeDist = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
-    let edgeDistPrev = min(min(prevUV.x, 1.0 - prevUV.x), min(prevUV.y, 1.0 - prevUV.y));
-    let edgeDistFwd = min(min(forwardUV.x, 1.0 - forwardUV.x), min(forwardUV.y, 1.0 - forwardUV.y));
-    let boundaryDist = min(edgeDist, min(edgeDistPrev, edgeDistFwd));
-    let boundaryFade = smoothstep(0.0, 0.02, boundaryDist);
-
-    var sampleUV_curr = uv;
-    var sampleUV_prev = prevUV;
-    var sampleUV_fwd = forwardUV;
-    if (params.flipv > 0.5) {
-        sampleUV_curr.y = 1.0 - sampleUV_curr.y;
-        sampleUV_prev.y = 1.0 - sampleUV_prev.y;
-        sampleUV_fwd.y = 1.0 - sampleUV_fwd.y;
-    }
-    let mask_curr = textureSample(uvTex, uvSampler, sampleUV_curr).b;
-    let mask_prev = textureSample(uvTex, uvSampler, sampleUV_prev).b;
-    let mask_fwd = textureSample(uvTex, uvSampler, sampleUV_fwd).b;
-    let maskFade = clamp(1.0 - max(mask_curr, max(mask_prev, mask_fwd)) * 10.0, 0.0, 1.0);
-
-    let fade = boundaryFade * maskFade;
-    var f_final = fp + 0.5 * (f_curr - fc) * fade;
-    
-    // 4. Point-sampled clamping bounds from the original state around prevUV
-    let texSize = vec2<f32>(textureDimensions(origStateTex, 0u));
-    let sizeI = vec2<i32>(texSize);
-    let tc = prevUV * texSize - 0.5;
-    let tc_floor = clamp(vec2<i32>(floor(tc)), vec2<i32>(0), sizeI - vec2<i32>(2));
-    
-    let c0 = textureLoad(origStateTex, tc_floor, 0);
-    let c1 = textureLoad(origStateTex, tc_floor + vec2<i32>(1, 0), 0);
-    let c2 = textureLoad(origStateTex, tc_floor + vec2<i32>(0, 1), 0);
-    let c3 = textureLoad(origStateTex, tc_floor + vec2<i32>(1, 1), 0);
-    
-    let minVal = min(c0, min(c1, min(c2, c3)));
-    let maxVal = max(c0, max(c1, max(c2, c3)));
-    
-    f_final = clamp(f_final, minVal, maxVal);
-    
-    var pigment = clamp(f_final.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    var concentration = clamp(f_final.a, 0.0, 2.0);
-    
-    if (params.viscosity > 0.001) {
-        let edgeDecay = mix(1.0, 0.94, smoothstep(0.6, 0.1, concentration));
-        concentration = concentration * mix(1.0, edgeDecay, params.viscosity);
-    }
-    
-    let source = textureSample(sourceTex, samp, uv);
-    if (source.a > 0.01) {
-        pigment = mix(pigment, source.rgb, source.a * 0.5);
-        let fillRate = 0.8;
-        concentration += (1.5 - concentration) * source.a * fillRate;
-    }
-    
-    concentration *= params.decay;
-    
-    var sampleUV = uv;
-    if (params.flipv > 0.5) {
-        sampleUV.y = 1.0 - sampleUV.y;
-    }
-    let mask = textureSample(uvTex, uvSampler, sampleUV).b;
-    if (mask > 0.01) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-    
-    return vec4<f32>(pigment, concentration);
-}`,
-
-  'rk4-maccormack': `fn sampleAdvection(uv: vec2<f32>, prevUV: vec2<f32>, vel: vec2<f32>) -> vec4<f32> {
-    // PASS 1: Predictor (RK4 Backward Advection)
-    let dt = 0.005;
-    let aspect = vec2<f32>(1.0 / params.aspectRatio, 1.0);
-    
-    // RK4 backtracking path
-    let k1 = vel;
-    let p1 = uv - 0.5 * dt * k1 * aspect;
-    let k2 = getVelocity(p1, params.time, params);
-    let p2 = uv - 0.5 * dt * k2 * aspect;
-    let k3 = getVelocity(p2, params.time, params);
-    let p3 = uv - dt * k3 * aspect;
-    let k4 = getVelocity(p3, params.time, params);
-    
-    let rk4_vel = (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0;
-    let rk4_prevUV = uv - dt * rk4_vel * aspect;
-    
-    return textureSample(prevStateTex, samp, rk4_prevUV);
-}
-
-@group(0) @binding(7) var origStateTex: texture_2d<f32>;
-
-@fragment
-fn advect_main2(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
-    let velocityScale = 1.0 - params.viscosity * 0.85;
-    let aspect = vec2<f32>(1.0 / params.aspectRatio, 1.0);
-    let dt = 0.005;
-    
-    var vel = getVelocity(uv, params.time, params) * velocityScale;
-    
-    // RK4 backtracking path to find the same rk4_prevUV
-    let k1 = vel;
-    let p1 = uv - 0.5 * dt * k1 * aspect;
-    let k2 = getVelocity(p1, params.time, params) * velocityScale;
-    let p2 = uv - 0.5 * dt * k2 * aspect;
-    let k3 = getVelocity(p2, params.time, params) * velocityScale;
-    let p3 = uv - dt * k3 * aspect;
-    let k4 = getVelocity(p3, params.time, params) * velocityScale;
-    
-    let rk4_vel = (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0;
-    let rk4_prevUV = uv - dt * rk4_vel * aspect;
-    
-    // 1. Predictor value fp (from tempTex at uv)
-    let fp = textureSample(prevStateTex, samp, uv);
-    
-    // 2. Corrector step (Project forward from rk4_prevUV using velocity at rk4_prevUV)
-    let vel_back = getVelocity(rk4_prevUV, params.time, params) * velocityScale;
-    let forwardUV = rk4_prevUV + vel_back * dt * aspect;
-    
-    // Sample predicted state tempTex at forwardUV
-    let fc = textureSample(prevStateTex, samp, forwardUV);
-    
-    // 3. Original state f_curr at uv
-    let f_curr = textureSample(origStateTex, samp, uv);
-    
-    // Smoothly fade out correction term near domain boundaries and masks to prevent artifacts
-    let edgeDist = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
-    let edgeDistPrev = min(min(rk4_prevUV.x, 1.0 - rk4_prevUV.x), min(rk4_prevUV.y, 1.0 - rk4_prevUV.y));
-    let edgeDistFwd = min(min(forwardUV.x, 1.0 - forwardUV.x), min(forwardUV.y, 1.0 - forwardUV.y));
-    let boundaryDist = min(edgeDist, min(edgeDistPrev, edgeDistFwd));
-    let boundaryFade = smoothstep(0.0, 0.02, boundaryDist);
-
-    var sampleUV_curr = uv;
-    var sampleUV_prev = rk4_prevUV;
-    var sampleUV_fwd = forwardUV;
-    if (params.flipv > 0.5) {
-        sampleUV_curr.y = 1.0 - sampleUV_curr.y;
-        sampleUV_prev.y = 1.0 - sampleUV_prev.y;
-        sampleUV_fwd.y = 1.0 - sampleUV_fwd.y;
-    }
-    let mask_curr = textureSample(uvTex, uvSampler, sampleUV_curr).b;
-    let mask_prev = textureSample(uvTex, uvSampler, sampleUV_prev).b;
-    let mask_fwd = textureSample(uvTex, uvSampler, sampleUV_fwd).b;
-    let maskFade = clamp(1.0 - max(mask_curr, max(mask_prev, mask_fwd)) * 10.0, 0.0, 1.0);
-
-    let fade = boundaryFade * maskFade;
-    var f_final = fp + 0.5 * (f_curr - fc) * fade;
-    
-    // 4. Point-sampled clamping bounds from original state around rk4_prevUV
-    let texSize = vec2<f32>(textureDimensions(origStateTex, 0u));
-    let sizeI = vec2<i32>(texSize);
-    let tc = rk4_prevUV * texSize - 0.5;
-    let tc_floor = clamp(vec2<i32>(floor(tc)), vec2<i32>(0), sizeI - vec2<i32>(2));
-    
-    let c0 = textureLoad(origStateTex, tc_floor, 0);
-    let c1 = textureLoad(origStateTex, tc_floor + vec2<i32>(1, 0), 0);
-    let c2 = textureLoad(origStateTex, tc_floor + vec2<i32>(0, 1), 0);
-    let c3 = textureLoad(origStateTex, tc_floor + vec2<i32>(1, 1), 0);
-    
-    let minVal = min(c0, min(c1, min(c2, c3)));
-    let maxVal = max(c0, max(c1, max(c2, c3)));
-    
-    f_final = clamp(f_final, minVal, maxVal);
-    
-    var pigment = clamp(f_final.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    var concentration = clamp(f_final.a, 0.0, 2.0);
-    
-    if (params.viscosity > 0.001) {
-        let edgeDecay = mix(1.0, 0.94, smoothstep(0.6, 0.1, concentration));
-        concentration = concentration * mix(1.0, edgeDecay, params.viscosity);
-    }
-    
-    let source = textureSample(sourceTex, samp, uv);
-    if (source.a > 0.01) {
-        pigment = mix(pigment, source.rgb, source.a * 0.5);
-        let fillRate = 0.8;
-        concentration += (1.5 - concentration) * source.a * fillRate;
-    }
-    
-    concentration *= params.decay;
-    
-    var sampleUV = uv;
-    if (params.flipv > 0.5) {
-        sampleUV.y = 1.0 - sampleUV.y;
-    }
-    let mask = textureSample(uvTex, uvSampler, sampleUV).b;
-    if (mask > 0.01) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-    
-    return vec4<f32>(pigment, concentration);
-}`,
-
-  'bicubic': `fn cubicWeight(x: f32) -> vec4<f32> {
-    let x2 = x * x;
-    let x3 = x2 * x;
-    let w0 = 0.5 * (-x3 + 2.0 * x2 - x);
-    let w1 = 0.5 * (3.0 * x3 - 5.0 * x2 + 2.0);
-    let w2 = 0.5 * (-3.0 * x3 + 4.0 * x2 + x);
-    let w3 = 0.5 * (x3 - x2);
-    return vec4<f32>(w0, w1, w2, w3);
-}
-
-fn sampleAdvection(uv: vec2<f32>, prevUV: vec2<f32>, vel: vec2<f32>) -> vec4<f32> {
-    let texSize = vec2<f32>(textureDimensions(prevStateTex, 0u));
-    let texelSize = 1.0 / texSize;
-    
-    let tc = prevUV * texSize - 0.5;
-    let tc_floor = floor(tc);
-    let frac = tc - tc_floor;
-    
-    let wx = cubicWeight(frac.x);
-    let wy = cubicWeight(frac.y);
-    
-    var color = vec4<f32>(0.0);
-    var weightSum = 0.0;
-    
-    for (var y: i32 = -1; y <= 2; y++) {
-        let coordY = (tc_floor.y + f32(y) + 0.5) * texelSize.y;
-        let wY = wy[y + 1];
-        
-        for (var x: i32 = -1; x <= 2; x++) {
-            let coordX = (tc_floor.x + f32(x) + 0.5) * texelSize.x;
-            let wX = wx[x + 1];
-            
-            let weight = wX * wY;
-            let samplePos = clamp(vec2<f32>(coordX, coordY), vec2<f32>(0.0), vec2<f32>(1.0));
-            color += textureSample(prevStateTex, samp, samplePos) * weight;
-            weightSum += weight;
-        }
-    }
-    
-    return color / weightSum;
-}`,
-
-  'bilinear': `fn sampleAdvection(uv: vec2<f32>, prevUV: vec2<f32>, vel: vec2<f32>) -> vec4<f32> {
-    return textureSample(prevStateTex, samp, prevUV);
-}`
+  'mac-cormack': buildAdvectPreset({ predictorAdvect: maccormackPredictor, correctorBody: maccormackCorrector }),
+  'bfecc': buildAdvectPreset({ predictorAdvect: bfeccPredictor, correctorBody: bfeccCorrector }),
+  'rk4-maccormack': buildAdvectPreset({ predictorAdvect: rk4MaccormackPredictor, correctorBody: rk4MaccormackCorrector }),
+  'tvd': buildAdvectPreset({ predictorAdvect: tvdPredictor, correctorBody: tvdCorrector }),
+  'bicubic': bicubicSource,
+  'bilinear': bilinearSource
 };
 
 // Simulation parameters
@@ -442,35 +108,7 @@ function resetMassStats() {
 let isQPressed = false;
 let isGPressed = false;
 
-// Drawing coordinates state
-const lastMousePos = { x: -1, y: -1 };
 
-// Helper: draw to paint canvas
-function drawToPaintCanvas(nx: number, ny: number) {
-  resetMassStats();
-  const w = paintCanvas.width;
-  const h = paintCanvas.height;
-  const r = gpuParamsA.mouseRadius * w;
-  const color = '#38bdf8'; // Sky blue pigment
-
-  paintCtx.beginPath();
-  if (lastMousePos.x !== -1) {
-    paintCtx.moveTo(lastMousePos.x * w, lastMousePos.y * h);
-    paintCtx.lineTo(nx * w, ny * h);
-    paintCtx.strokeStyle = color;
-    paintCtx.lineWidth = r * 2;
-    paintCtx.lineCap = 'round';
-    paintCtx.lineJoin = 'round';
-    paintCtx.stroke();
-  } else {
-    paintCtx.arc(nx * w, ny * h, r, 0, Math.PI * 2);
-    paintCtx.fillStyle = color;
-    paintCtx.fill();
-  }
-  
-  lastMousePos.x = nx;
-  lastMousePos.y = ny;
-}
 
 // Mirror quivers injection
 function addQuivers() {
@@ -504,6 +142,38 @@ function addGrid() {
   }
 }
 
+// Mirror slotted cylinder (Zalesak's Disk) injection
+function addSlottedCylinder() {
+  resetMassStats();
+  const w = paintCanvas.width;
+  const h = paintCanvas.height;
+  
+  // Center of slotted cylinder at (0.5, 0.7)
+  const cx = 0.5 * w;
+  const cy = 0.7 * h;
+  const r = 0.15 * Math.min(w, h);
+  const slotW = 0.04 * Math.min(w, h);
+  const slotH = 0.22 * Math.min(w, h);
+  
+  // Clear any existing paint to start fresh
+  paintCtx.clearRect(0, 0, w, h);
+  
+  // Draw cylinder
+  paintCtx.fillStyle = '#ffffff';
+  paintCtx.beginPath();
+  paintCtx.arc(cx, cy, r, 0, Math.PI * 2);
+  paintCtx.fill();
+  
+  // Subtract slot using globalCompositeOperation 'destination-out'
+  paintCtx.globalCompositeOperation = 'destination-out';
+  paintCtx.beginPath();
+  paintCtx.rect(cx - slotW / 2, cy - r, slotW, slotH);
+  paintCtx.fill();
+  
+  // Restore default composition
+  paintCtx.globalCompositeOperation = 'source-over';
+}
+
 // Shared mouse interaction handlers
 let isMouseDown = false;
 
@@ -517,11 +187,6 @@ function handleInteractionStart(e: MouseEvent, canvas: HTMLCanvasElement) {
 function handleInteractionMove(e: MouseEvent, canvas: HTMLCanvasElement) {
   if (!isMouseDown) return;
   updateMouseCoordinates(e, canvas);
-  
-  const rect = canvas.getBoundingClientRect();
-  const nx = (e.clientX - rect.left) / rect.width;
-  const ny = (e.clientY - rect.top) / rect.height;
-  drawToPaintCanvas(nx, ny);
 }
 
 function handleInteractionEnd() {
@@ -532,8 +197,6 @@ function handleInteractionEnd() {
   gpuParamsA.mouseY = -1.0;
   gpuParamsB.mouseX = -1.0;
   gpuParamsB.mouseY = -1.0;
-  lastMousePos.x = -1;
-  lastMousePos.y = -1;
 }
 
 function updateMouseCoordinates(e: MouseEvent, canvas: HTMLCanvasElement) {
@@ -575,10 +238,10 @@ async function recompileShader() {
   }
 }
 
-// Re-size canvasses synchronously
 function resize() {
-  const w = Math.floor(canvasA.parentElement!.clientWidth);
-  const h = Math.floor(canvasA.parentElement!.clientHeight);
+  const w = Math.floor(canvasA.parentElement!.clientWidth) || 800;
+  const h = Math.floor(canvasA.parentElement!.clientHeight) || 600;
+  if (w <= 0 || h <= 0) return;
   
   canvasA.width = w;
   canvasA.height = h;
@@ -666,6 +329,20 @@ function loop() {
   if (frameCount % 10 === 0) {
     updateStats();
   }
+
+  // Check and count blue-dominant pixels periodically
+  if (frameCount % 100 === 0) {
+    simA.countBluePixels().then(count => {
+      if (count > 0) {
+        console.log(`[Left Canvas - Bilinear] Active blue-dominant pixels: ${count}`);
+      }
+    });
+    simB.countBluePixels().then(count => {
+      if (count > 0) {
+        console.log(`[Right Canvas - Pluggable] Active blue-dominant pixels: ${count}`);
+      }
+    });
+  }
   
   // Track performance metrics
   frameCount++;
@@ -721,8 +398,10 @@ function loadModel(model: any) {
   paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
   resetMassStats();
   
-  gpuParamsA.analytical = model.engine === 'analytical' ? 1.0 : 0.0;
-  gpuParamsB.analytical = model.engine === 'analytical' ? 1.0 : 0.0;
+  gpuParamsA.analytical = model.engine === 'analytical' ? (model.analyticalValue || 1.0) : 0.0;
+  gpuParamsB.analytical = model.engine === 'analytical' ? (model.analyticalValue || 1.0) : 0.0;
+  gpuParamsA.time = 0.0;
+  gpuParamsB.time = 0.0;
   
   if (model.uniforms) {
     if (typeof model.uniforms.scale === 'number') {
@@ -804,6 +483,12 @@ function bindEvents() {
   btnQuivers.addEventListener('mousedown', () => { isQPressed = true; });
   btnQuivers.addEventListener('mouseup', () => { isQPressed = false; });
   btnQuivers.addEventListener('mouseleave', () => { isQPressed = false; });
+
+  btnSlotted.addEventListener('click', () => {
+    addSlottedCylinder();
+    simA.loadPaintCanvasToSimulation();
+    simB.loadPaintCanvasToSimulation();
+  });
 
   btnClear.addEventListener('click', () => {
     simA.clearTextures();

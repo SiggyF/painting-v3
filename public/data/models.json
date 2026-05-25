@@ -204,7 +204,62 @@
       },
       "width": 1024,
       "height": 1024
+    },
+    {
+      "title": "Horizontal flow (u=1, v=0)",
+      "abstract": "Constant horizontal advection test case.",
+      "id": "horizontal-flow-test-case",
+      "engine": "analytical",
+      "analyticalValue": 2.0,
+      "uv": {
+        "src": "models/images/circular.png",
+        "type": "image/png",
+        "tag": "img",
+        "width": 1024,
+        "height": 1024
+      },
+      "uniforms": {
+        "flipv": false,
+        "decay": 0.99,
+        "scale": 1.0
+      },
+      "extent": {
+        "sw": [52.498012542723586, 4.026927471160947],
+        "ne": [53.758518218850185, 6.538724422447244]
+      },
+      "view": {
+        "zoom": 10
+      },
+      "width": 1024,
+      "height": 1024
+    },
+    {
+      "title": "Back-and-forth diagonal flow",
+      "abstract": "Diagonal flow reversing direction every 100 timesteps.",
+      "id": "back-and-forth-diagonal-test-case",
+      "engine": "analytical",
+      "analyticalValue": 3.0,
+      "uv": {
+        "src": "models/images/circular.png",
+        "type": "image/png",
+        "tag": "img",
+        "width": 1024,
+        "height": 1024
+      },
+      "uniforms": {
+        "flipv": false,
+        "decay": 0.99,
+        "scale": 1.0
+      },
+      "extent": {
+        "sw": [52.498012542723586, 4.026927471160947],
+        "ne": [53.758518218850185, 6.538724422447244]
+      },
+      "view": {
+        "zoom": 10
+      },
+      "width": 1024,
+      "height": 1024
     }
-
   ]
 }
