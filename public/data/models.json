@@ -15,7 +15,7 @@
       "uniforms": {
         "flipv": true,
         "scale": 2.0,
-        "decay": 0.999
+        "decay": 1.0
       },
       "extent": {
         "sw": [49.264198303222656, -3.877345323562622],
@@ -44,7 +44,7 @@
       "uniforms": {
         "flipv": true,
         "scale": 5.0,
-        "decay": 0.99
+        "decay": 1.0
       },
       "extent": {
         "sw": [52.498012542723586, 4.026927471160947],
@@ -73,7 +73,7 @@
       "uniforms": {
         "flipv": true,
         "scale": 5.0,
-        "decay": 0.99
+        "decay": 1.0
       },
       "extent": {
 
@@ -102,7 +102,7 @@
       "uniforms": {
         "flipv": true,
         "scale": 5.0,
-        "decay": 0.99
+        "decay": 1.0
       },
       "extent": {
         "sw": [37.4487848675731, -123.09234894317646],
@@ -129,7 +129,7 @@
       "uniforms": {
         "scale": 3,
         "flipv": false,
-        "decay": 0.99
+        "decay": 1.0
       },
       "extent": {
         "sw": [ 26.064999, -30.868795],
@@ -189,7 +189,7 @@
       },
       "uniforms": {
         "flipv": false,
-        "decay": 0.99,
+        "decay": 1.0,
         "scale": 10.0
       },
       "extent": {
@@ -220,7 +220,7 @@
       },
       "uniforms": {
         "flipv": false,
-        "decay": 0.99,
+        "decay": 1.0,
         "scale": 1.0
       },
       "extent": {
@@ -248,7 +248,7 @@
       },
       "uniforms": {
         "flipv": false,
-        "decay": 0.99,
+        "decay": 1.0,
         "scale": 1.0
       },
       "extent": {

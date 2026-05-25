@@ -67,6 +67,12 @@
             </span>
             <span class="text-[7px] text-slate-500 uppercase tracking-wider ml-1">First-Order Semi-Lagrangian</span>
           </div>
+
+          <div class="absolute top-4 right-4 z-20">
+            <span id="timesteps-a" class="px-2 py-1 rounded bg-slate-950/80 border border-white/10 text-[9px] font-mono text-slate-400 backdrop-blur">
+              Steps: 0
+            </span>
+          </div>
           
           <div class="absolute bottom-4 right-4 z-20 pointer-events-none">
             <div id="stats-a" class="px-2.5 py-1.5 rounded bg-slate-950/80 border border-white/10 text-[9px] font-mono text-slate-400 backdrop-blur flex flex-col gap-0.5 min-w-16">
@@ -100,6 +106,12 @@
             <span class="text-[7px] text-slate-500 uppercase tracking-wider ml-1">Dynamic JIT Pipeline Recompilation</span>
           </div>
 
+          <div class="absolute top-4 right-4 z-20">
+            <span id="timesteps-b" class="px-2 py-1 rounded bg-slate-950/80 border border-white/10 text-[9px] font-mono text-slate-400 backdrop-blur">
+              Steps: 0
+            </span>
+          </div>
+
           <div class="absolute bottom-4 right-4 z-20 pointer-events-none">
             <div id="stats-b" class="px-2.5 py-1.5 rounded bg-slate-950/80 border border-white/10 text-[9px] font-mono text-slate-400 backdrop-blur flex flex-col gap-0.5 min-w-16">
               <div>FPS: --</div>
@@ -122,6 +134,16 @@
           
           <!-- Shared Parameters -->
           <div class="space-y-4">
+            <div class="flex gap-2">
+              <button id="btn-toggle" class="flex-[2] py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[9px] uppercase font-bold text-emerald-400 hover:bg-emerald-500/20 hover:border-emerald-500/50 transition-all flex items-center justify-center gap-2 cursor-pointer">
+                <!-- Content will be updated by JS -->
+              </button>
+              <button id="btn-clear" class="flex-1 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-[9px] uppercase font-bold text-red-400 hover:bg-red-500/20 hover:border-red-500/50 transition-all flex items-center justify-center gap-1 cursor-pointer">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2v6h6M2.5 22v-6h6M21.5 22v-6h-6M21.5 2v6h-6"/></svg>
+                Rewind
+              </button>
+            </div>
+
             <div>
               <div class="flex justify-between text-[10px] mb-1.5 text-slate-400 font-mono">
                 <span>Domain Flow Velocity</span>
@@ -168,9 +190,6 @@
               </button>
               <button id="btn-slotted" class="px-2 py-2 rounded-lg bg-white/5 border border-white/5 text-[9px] uppercase font-bold text-slate-300 hover:bg-sky-500/20 hover:border-sky-500/50 transition-all flex items-center justify-center gap-1 cursor-pointer">
                 Slotted cylinder
-              </button>
-              <button id="btn-clear" class="px-2 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-[9px] uppercase font-bold text-red-400 hover:bg-red-500/20 hover:border-red-500/50 transition-all flex items-center justify-center gap-1 cursor-pointer">
-                Reset
               </button>
             </div>
           </div>

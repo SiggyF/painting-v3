@@ -37,9 +37,12 @@ const btnGrid = document.getElementById('btn-grid') as HTMLButtonElement;
 const btnQuivers = document.getElementById('btn-quivers') as HTMLButtonElement;
 const btnSlotted = document.getElementById('btn-slotted') as HTMLButtonElement;
 const btnClear = document.getElementById('btn-clear') as HTMLButtonElement;
+const btnToggle = document.getElementById('btn-toggle') as HTMLButtonElement;
 
 const statsA = document.getElementById('stats-a') as HTMLDivElement;
 const statsB = document.getElementById('stats-b') as HTMLDivElement;
+const stepsLabelA = document.getElementById('timesteps-a') as HTMLSpanElement;
+const stepsLabelB = document.getElementById('timesteps-b') as HTMLSpanElement;
 
 // Initialize independent WebGPU simulations
 const simA = useWebGPU();
@@ -48,6 +51,19 @@ const simB = useWebGPU();
 // Create shared 2D offscreen canvas for identical drawing
 const paintCanvas = document.createElement('canvas');
 const paintCtx = paintCanvas.getContext('2d')!;
+
+let totalSteps = 0;
+let isPaused = true;
+
+function updatePlayPauseUI() {
+  if (isPaused) {
+    btnToggle.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg> Play`;
+    btnToggle.className = "flex-[2] py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[9px] uppercase font-bold text-emerald-400 hover:bg-emerald-500/20 hover:border-emerald-500/50 transition-all flex items-center justify-center gap-2 cursor-pointer";
+  } else {
+    btnToggle.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause`;
+    btnToggle.className = "flex-[2] py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[9px] uppercase font-bold text-amber-400 hover:bg-amber-500/20 hover:border-amber-500/50 transition-all flex items-center justify-center gap-2 cursor-pointer";
+  }
+}
 
 function buildAdvectPreset(config: {
   predictorAdvect: string;
@@ -70,7 +86,7 @@ const presets: Record<string, string> = {
 
 // Simulation parameters
 const gpuParamsA = {
-  speed: 0.16, blend: 0.5, time: 0.0, aspect: 1.0, scale: 4.0,
+  speed: 0.16, blend: 0.0, time: 0.0, aspect: 1.0, scale: 16.0,
   mouseX: -1.0, mouseY: -1.0, isDrawing: 0.0, mouseDirX: 0.0, mouseDirY: 0.0,
   uvScale: 1.6, flipv: 1.0, mouseRadius: 0.005, decay: 1.0, viscosity: 0.0,
   scheme: 0.0, // Left canvas is Bilinear
@@ -78,7 +94,7 @@ const gpuParamsA = {
 };
 
 const gpuParamsB = {
-  speed: 0.16, blend: 0.5, time: 0.0, aspect: 1.0, scale: 4.0,
+  speed: 0.16, blend: 0.0, time: 0.0, aspect: 1.0, scale: 16.0,
   mouseX: -1.0, mouseY: -1.0, isDrawing: 0.0, mouseDirX: 0.0, mouseDirY: 0.0,
   uvScale: 1.6, flipv: 1.0, mouseRadius: 0.005, decay: 1.0, viscosity: 0.0,
   scheme: 1.0, // Right canvas uses pluggable custom solver
@@ -117,7 +133,7 @@ function addQuivers() {
   resetMassStats();
   const w = paintCanvas.width;
   const h = paintCanvas.height;
-  const radius = Math.max(0.9, w * 0.0009); // 50% larger size
+  const radius = 3.0; // 3px radius for high visibility
   paintCtx.fillStyle = '#ffffff';
   for (let i = 0; i < 200; i++) {
     const x = Math.random() * w;
@@ -133,14 +149,24 @@ function addGrid() {
   resetMassStats();
   const w = paintCanvas.width;
   const h = paintCanvas.height;
-  const step = w / 16;
+
+  // Grid should be a square of side 0.5 * sqrt(2) centered at (0.5, 0.5)
+  // to ensure it stays within a radius of 0.5 from the center during rotation.
+  const side = 0.5 * Math.sqrt(2);
+  const xMin = (0.5 - side / 2) * w;
+  const xMax = (0.5 + side / 2) * w;
+  const yMin = (0.5 - side / 2) * h;
+  const yMax = (0.5 + side / 2) * h;
+  
+  const step = (xMax - xMin) / 12; // 12 subdivisions
   paintCtx.strokeStyle = '#ffffff';
   paintCtx.lineWidth = 0.4;
-  for (let x = 0; x <= w; x += step) {
-    paintCtx.beginPath(); paintCtx.moveTo(x, 0); paintCtx.lineTo(x, h); paintCtx.stroke();
+
+  for (let x = xMin; x <= xMax + 0.1; x += step) {
+    paintCtx.beginPath(); paintCtx.moveTo(x, yMin); paintCtx.lineTo(x, yMax); paintCtx.stroke();
   }
-  for (let y = 0; y <= h; y += step) {
-    paintCtx.beginPath(); paintCtx.moveTo(0, y); paintCtx.lineTo(w, y); paintCtx.stroke();
+  for (let y = yMin; y <= yMax + 0.1; y += step) {
+    paintCtx.beginPath(); paintCtx.moveTo(xMin, y); paintCtx.lineTo(xMax, y); paintCtx.stroke();
   }
 }
 
@@ -302,21 +328,23 @@ let lastTime = performance.now();
 let fps = 60;
 
 function loop() {
-  gpuParamsA.time += 0.01;
-  gpuParamsB.time += 0.01;
-  
+  if (!isPaused) {
+    gpuParamsA.time += 0.01;
+    gpuParamsB.time += 0.01;
+  }
+
   gpuParamsA.mouseDirX *= 0.9;
   gpuParamsA.mouseDirY *= 0.9;
   gpuParamsB.mouseDirX *= 0.9;
   gpuParamsB.mouseDirY *= 0.9;
-  
+
   if (isQPressed) addQuivers();
   if (isGPressed) addGrid();
-  
+
   // Upload offscreen draw buffer to both simulations
   simA.updatePaintTexture(paintCanvas);
   simB.updatePaintTexture(paintCanvas);
-  
+
   // Update Flow source
   if (currentSourceType === 'video' && videoElement.readyState >= 2) {
     if (videoElement.paused) videoElement.play().catch(() => {});
@@ -326,10 +354,21 @@ function loop() {
     simA.updateUVTexture(imageElement);
     simB.updateUVTexture(imageElement);
   }
+
+  // Pass zero speed when paused to freeze advection while still allowing input/rendering
+  const currentParamsA = { ...gpuParamsA, speed: isPaused ? 0.0 : gpuParamsA.speed };
+  const currentParamsB = { ...gpuParamsB, speed: isPaused ? 0.0 : gpuParamsB.speed };
   
-  simA.render(gpuParamsA);
-  simB.render(gpuParamsB);
-  
+  simA.render(currentParamsA);
+  simB.render(currentParamsB);
+
+  // Update timestep display
+  if (!isPaused) {
+    totalSteps++;
+    if (stepsLabelA) stepsLabelA.textContent = `Steps: ${totalSteps}`;
+    if (stepsLabelB) stepsLabelB.textContent = `Steps: ${totalSteps}`;
+  }
+
   // Clear offscreen draw canvas if non-sticky
   if (!isPersistentSource) {
     paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
@@ -338,20 +377,6 @@ function loop() {
   // Fetch stats periodically
   if (frameCount % 10 === 0) {
     updateStats();
-  }
-
-  // Check and count blue-dominant pixels periodically
-  if (frameCount % 100 === 0) {
-    simA.countBluePixels().then(count => {
-      if (count > 0) {
-        console.log(`[Left Canvas - Bilinear] Active blue-dominant pixels: ${count}`);
-      }
-    });
-    simB.countBluePixels().then(count => {
-      if (count > 0) {
-        console.log(`[Right Canvas - Pluggable] Active blue-dominant pixels: ${count}`);
-      }
-    });
   }
   
   // Track performance metrics
@@ -407,6 +432,7 @@ function loadModel(model: any) {
   
   paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
   resetMassStats();
+  totalSteps = 0;
   
   gpuParamsA.analytical = model.engine === 'analytical' ? (model.analyticalValue || 1.0) : 0.0;
   gpuParamsB.analytical = model.engine === 'analytical' ? (model.analyticalValue || 1.0) : 0.0;
@@ -449,6 +475,12 @@ function loadModel(model: any) {
 
 // Bind UI event listeners
 function bindEvents() {
+  // Play/Pause toggle
+  btnToggle.addEventListener('click', () => {
+    isPaused = !isPaused;
+    updatePlayPauseUI();
+  });
+
   // Canvases drawing listeners (A & B mirror automatically)
   canvasA.addEventListener('mousedown', (e) => handleInteractionStart(e, canvasA));
   canvasA.addEventListener('mousemove', (e) => handleInteractionMove(e, canvasA));
@@ -507,6 +539,13 @@ function bindEvents() {
     simB.clearSource();
     paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
     resetMassStats();
+    totalSteps = 0;
+    gpuParamsA.time = 0;
+    gpuParamsB.time = 0;
+    isPaused = true;
+    updatePlayPauseUI();
+    if (stepsLabelA) stepsLabelA.textContent = `Steps: 0`;
+    if (stepsLabelB) stepsLabelB.textContent = `Steps: 0`;
   });
 
   // Preset schemes selector
@@ -565,6 +604,7 @@ async function start() {
 
   resize();
   bindEvents();
+  updatePlayPauseUI();
   await initModels();
   loop();
 }

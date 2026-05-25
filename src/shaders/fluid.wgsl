@@ -218,27 +218,13 @@ fn render_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
-    // Background flow visualization (Subtle streaks using coordinate and time noise)
-    let uvA = vec2<f32>(uv.x * params.aspectRatio, uv.y);
-    let streakNoise = noise(uvA * 20.0 + params.time * 0.1);
-    let flowLum = smoothstep(0.4, 0.6, streakNoise);
-    let streakColor = vec3<f32>(0.4, 0.6, 1.0); // Light blue streaks
-    var streakAlpha = flowLum * 0.15; // Very subtle
-    if (params.analytical > 0.5) {
-        streakAlpha = 0.0;
-    }
-
     // Render Pigment
     let pigmentColor = s.rgb;
     let pigmentOpacity = s.a; // Concentration can be up to 2.0 for glowing
 
-    // High-tech Screen Blending glow effect
-    let bg = streakColor * streakAlpha;
-    let fg = pigmentColor * pigmentOpacity;
-    let finalRGB = clamp(bg + fg - bg * fg, vec3<f32>(0.0), vec3<f32>(1.0));
+    let finalRGB = clamp(pigmentColor * pigmentOpacity, vec3<f32>(0.0), vec3<f32>(1.0));
 
-    let finalA = max(streakAlpha, pigmentOpacity);
-    return vec4<f32>(finalRGB, clamp(finalA, 0.0, 1.0));
+    return vec4<f32>(finalRGB, clamp(pigmentOpacity, 0.0, 1.0));
 }
 
 // --- Stats Compute Shader ---

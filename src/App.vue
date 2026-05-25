@@ -146,8 +146,7 @@ const addQuivers = () => {
   if (!paintCtx) return
   const w = paintCanvas.width
   const h = paintCanvas.height
-  // Use a radius that is 50% larger (0.09% of width, minimum 0.9 pixels) to make quivers visible in non-sticky mode
-  const radius = Math.max(0.9, w * 0.0009)
+  const radius = 3.0 // 3px radius for high visibility
   paintCtx.fillStyle = 'white'
   for (let i = 0; i < 200; i++) {
     const x = Math.random() * w
@@ -392,10 +391,10 @@ const handleModelSelect = (model: any) => {
 
 const gpuParams = reactive<GPUParams>({
   speed: 0.16,
-  blend: 0.5,
+  blend: 0.0,
   time: 0.0,
   aspect: 1.0,
-  scale: 4.0,
+  scale: 16.0,
   mouseX: -1.0,
   mouseY: -1.0,
   isDrawing: 0.0,
@@ -404,7 +403,7 @@ const gpuParams = reactive<GPUParams>({
   uvScale: 1.6, // Slowed down by ~5x (from 8.0)
   flipv: 1.0,
   mouseRadius: 0.005,
-  decay: 0.999,
+  decay: 1.0,
   viscosity: 0.0,
   scheme: 0.0,
   analytical: 0.0
@@ -428,9 +427,10 @@ onMounted(() => {
 
     gpuLayer = new WebGPULayer()
     gpuLayer.addTo(leafletMap)
-
+    
     const canvas = gpuLayer.getCanvas()
     if (canvas) {
+      canvas.style.mixBlendMode = 'screen'
       init(canvas).then(() => {
         gpuParams.aspect = canvas.width / canvas.height
         // Explicitly set initial state: Map navigation active
@@ -616,15 +616,15 @@ onUnmounted(() => {
     <div class="absolute inset-0 z-20 pointer-events-none flex flex-col">
       
       <!-- Top Header / Controls -->
-      <div class="p-6 flex justify-between items-start pointer-events-none">
-        <div class="flex items-start gap-4 pointer-events-auto">
+      <div class="p-4 sm:p-6 flex justify-between items-start pointer-events-none">
+        <div class="flex items-start gap-3 sm:gap-4 pointer-events-auto">
           <!-- Clock Widget -->
-          <div class="glass-panel p-4 rounded-xl shadow-2xl ring-1 ring-white/10 flex items-center gap-4 bg-slate-900/40 backdrop-blur-md">
+          <div class="glass-panel p-3 sm:p-4 rounded-xl shadow-2xl ring-1 ring-white/10 flex items-center gap-3 sm:gap-4 bg-slate-900/40 backdrop-blur-md">
             <div class="text-right">
-              <p class="text-[18px] font-mono font-bold text-white tracking-tighter leading-none">
+              <p class="text-[16px] sm:text-[18px] font-mono font-bold text-white tracking-tighter leading-none">
                 {{ modelTime.toLocaleTimeString([], { hour12: false }) }}
               </p>
-              <p class="text-[9px] uppercase tracking-[0.2em] text-sky-400/80 font-bold">
+              <p class="text-[8px] sm:text-[9px] uppercase tracking-[0.2em] text-sky-400/80 font-bold">
                 {{ modelTime.toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' }) }}
               </p>
             </div>
@@ -640,22 +640,22 @@ onUnmounted(() => {
                </div>
             </div>
             <div class="w-px h-8 bg-white/10"></div>
-            <div class="w-8 h-8 rounded-lg bg-sky-500/10 flex items-center justify-center border border-sky-500/20">
-               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-sky-400"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            <div class="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-sky-500/10 flex items-center justify-center border border-sky-500/20">
+               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-sky-400"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
             </div>
           </div>
 
           <!-- Instruction Card -->
-          <div class="glass-panel p-4 rounded-xl flex items-center gap-4 shadow-2xl ring-1 ring-white/10 bg-slate-900/40 backdrop-blur-md">
-            <div class="w-8 h-8 rounded-lg bg-sky-500 flex items-center justify-center shadow-lg shadow-sky-500/20">
-               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-white"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
+          <div class="glass-panel p-3 sm:p-4 rounded-xl flex items-center gap-3 sm:gap-4 shadow-2xl ring-1 ring-white/10 bg-slate-900/40 backdrop-blur-md">
+            <div class="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-sky-500 flex items-center justify-center shadow-lg shadow-sky-500/20">
+               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-white"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
             </div>
             <div>
-              <h1 class="text-sm font-bold text-white tracking-tight leading-tight">
+              <h1 class="text-xs sm:text-sm font-bold text-white tracking-tight leading-tight">
                 <span class="hidden sm:inline">Hold <span class="text-sky-400">SHIFT</span> + MOVE to Paint</span>
                 <span class="sm:hidden">Hold <span class="text-sky-400">BUTTON</span> + MOVE to Paint</span>
               </h1>
-              <p class="text-[9px] uppercase tracking-[0.2em] text-slate-500 font-bold mt-0.5">Hydrodynamic Flow Engine</p>
+              <p class="text-[8px] sm:text-[9px] uppercase tracking-[0.2em] text-slate-500 font-bold mt-0.5">Hydrodynamic Flow Engine</p>
             </div>
           </div>
         </div>
@@ -899,9 +899,9 @@ onUnmounted(() => {
       </div>
 
       <!-- Bottom Panel (Domain Details) -->
-      <div class="mt-auto p-6 pointer-events-none flex justify-center">
-        <div v-if="selectedModel" class="glass-panel p-5 rounded-2xl w-full max-w-3xl pointer-events-auto shadow-2xl ring-1 ring-white/10 flex gap-6">
-          <div class="flex-1 col-span-2">
+      <div class="mt-auto p-4 sm:p-6 pointer-events-none flex justify-center overflow-hidden">
+        <div v-if="selectedModel" class="glass-panel p-4 sm:p-5 rounded-2xl w-full max-w-3xl pointer-events-auto shadow-2xl ring-1 ring-white/10 flex flex-col sm:flex-row gap-4 sm:gap-6 max-h-[40vh] sm:max-h-none overflow-y-auto custom-scrollbar">
+          <div class="flex-1">
              <h2 class="text-[10px] font-bold uppercase text-sky-400 tracking-widest border-b border-white/5 pb-2 mb-3 flex items-center gap-2">
                 <span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
                 Domain Information
@@ -911,20 +911,20 @@ onUnmounted(() => {
                    <h3 class="text-sm font-semibold text-slate-200">{{ selectedModel.title }}</h3>
                    <p class="text-xs text-slate-400 leading-relaxed">{{ selectedModel.abstract || 'No description available' }}</p>
                 </div>
-                <div v-if="selectedModel.extent?.time" class="flex gap-4 pt-2 text-[10px] uppercase text-slate-500">
+                <div v-if="selectedModel.extent?.time" class="flex flex-col sm:flex-row gap-2 sm:gap-4 pt-2 text-[10px] uppercase text-slate-500">
                    <div>
                       <span class="block text-slate-600">Start Time</span>
-                      <span class="text-slate-300 font-mono">{{ new Date(selectedModel.extent.time[0]).toUTCString() }}</span>
+                      <span class="text-slate-300 font-mono">{{ new Date(selectedModel.extent.time[0]).toUTCString().split(' ').slice(1, 5).join(' ') }} UTC</span>
                    </div>
                    <div>
                       <span class="block text-slate-600">End Time</span>
-                      <span class="text-slate-300 font-mono">{{ new Date(selectedModel.extent.time[1]).toUTCString() }}</span>
+                      <span class="text-slate-300 font-mono">{{ new Date(selectedModel.extent.time[1]).toUTCString().split(' ').slice(1, 5).join(' ') }} UTC</span>
                    </div>
                 </div>
              </div>
           </div>
-          <div class="w-px bg-white/5"></div>
-          <div class="w-48 flex flex-col justify-center">
+          <div class="hidden sm:block w-px bg-white/5"></div>
+          <div class="w-full sm:w-48 flex flex-col justify-center border-t border-white/5 pt-4 sm:border-t-0 sm:pt-0">
              <div class="text-[10px] uppercase text-slate-500 tracking-widest mb-1">Domain Engine</div>
              <div class="text-md font-bold text-slate-200 truncate">{{ selectedModel.engine || 'WebGPU' }}</div>
              <div class="mt-4 pt-4 border-t border-white/5 space-y-2">
