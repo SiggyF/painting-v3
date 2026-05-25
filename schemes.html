@@ -75,10 +75,8 @@
             </div>
           </div>
           
-          <div class="flex-1 relative bg-black/40 flex items-center justify-center p-4">
-            <div class="w-full h-full max-w-full max-h-full aspect-square relative">
-              <canvas id="canvas-a" class="absolute inset-0 w-full h-full object-cover cursor-crosshair rounded-lg"></canvas>
-            </div>
+          <div class="flex-1 relative bg-black/40 flex items-start justify-center p-4">
+            <canvas id="canvas-a" class="aspect-square max-w-full max-h-full cursor-crosshair rounded-lg shadow-2xl border border-white/20"></canvas>
           </div>
         </div>
 
@@ -96,6 +94,7 @@
                 <option value="tvd">TVD (Minmod MacCormack)</option>
                 <option value="bicubic">Bicubic (Catmull-Rom)</option>
                 <option value="bilinear">Bilinear (Hardware)</option>
+                <option value="roe">Roe Solver (Upwind)</option>
               </select>
             </div>
             <span class="text-[7px] text-slate-500 uppercase tracking-wider ml-1">Dynamic JIT Pipeline Recompilation</span>
@@ -108,10 +107,8 @@
             </div>
           </div>
 
-          <div class="flex-1 relative bg-black/40 flex items-center justify-center p-4">
-            <div class="w-full h-full max-w-full max-h-full aspect-square relative">
-              <canvas id="canvas-b" class="absolute inset-0 w-full h-full object-cover cursor-crosshair rounded-lg"></canvas>
-            </div>
+          <div class="flex-1 relative bg-black/40 flex items-start justify-center p-4">
+            <canvas id="canvas-b" class="aspect-square max-w-full max-h-full cursor-crosshair rounded-lg shadow-2xl border border-white/20"></canvas>
           </div>
         </div>
       </div>
@@ -136,9 +133,9 @@
             <div>
               <div class="flex justify-between text-[10px] mb-1.5 text-slate-400 font-mono">
                 <span>Concentration Decay (Dissipation)</span>
-                <span id="label-decay" class="text-sky-400">99.90%</span>
+                <span id="label-decay" class="text-sky-400">100.00%</span>
               </div>
-              <input type="range" id="param-decay" min="0.95" max="1.0" step="0.001" value="0.999" class="w-full">
+              <input type="range" id="param-decay" min="0.95" max="1.0" step="0.001" value="1.0" class="w-full">
             </div>
 
             <div>

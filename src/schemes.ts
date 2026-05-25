@@ -11,6 +11,7 @@ import tvdCorrector from './shaders/tvd_corrector.wgsl?raw';
 import advectionTemplateSource from './shaders/advection_template.wgsl?raw';
 import bicubicSource from './shaders/bicubic.wgsl?raw';
 import bilinearSource from './shaders/bilinear.wgsl?raw';
+import roeSource from './shaders/roe.wgsl?raw';
 
 // Retrieve DOM elements
 const canvasA = document.getElementById('canvas-a') as HTMLCanvasElement;
@@ -63,14 +64,15 @@ const presets: Record<string, string> = {
   'rk4-maccormack': buildAdvectPreset({ predictorAdvect: rk4MaccormackPredictor, correctorBody: rk4MaccormackCorrector }),
   'tvd': buildAdvectPreset({ predictorAdvect: tvdPredictor, correctorBody: tvdCorrector }),
   'bicubic': bicubicSource,
-  'bilinear': bilinearSource
+  'bilinear': bilinearSource,
+  'roe': roeSource
 };
 
 // Simulation parameters
 const gpuParamsA = {
   speed: 0.16, blend: 0.5, time: 0.0, aspect: 1.0, scale: 4.0,
   mouseX: -1.0, mouseY: -1.0, isDrawing: 0.0, mouseDirX: 0.0, mouseDirY: 0.0,
-  uvScale: 1.6, flipv: 1.0, mouseRadius: 0.005, decay: 0.999, viscosity: 0.0,
+  uvScale: 1.6, flipv: 1.0, mouseRadius: 0.005, decay: 1.0, viscosity: 0.0,
   scheme: 0.0, // Left canvas is Bilinear
   analytical: 1.0 // Default to analytical circular vortex active
 };
@@ -78,7 +80,7 @@ const gpuParamsA = {
 const gpuParamsB = {
   speed: 0.16, blend: 0.5, time: 0.0, aspect: 1.0, scale: 4.0,
   mouseX: -1.0, mouseY: -1.0, isDrawing: 0.0, mouseDirX: 0.0, mouseDirY: 0.0,
-  uvScale: 1.6, flipv: 1.0, mouseRadius: 0.005, decay: 0.999, viscosity: 0.0,
+  uvScale: 1.6, flipv: 1.0, mouseRadius: 0.005, decay: 1.0, viscosity: 0.0,
   scheme: 1.0, // Right canvas uses pluggable custom solver
   analytical: 1.0
 };
@@ -243,19 +245,27 @@ function resize() {
   const h = Math.floor(canvasA.parentElement!.clientHeight) || 600;
   if (w <= 0 || h <= 0) return;
   
-  canvasA.width = w;
-  canvasA.height = h;
-  canvasB.width = w;
-  canvasB.height = h;
+  // Calculate the largest square size that fits the available container area
+  const size = Math.min(w, h);
   
-  paintCanvas.width = w * 2;
-  paintCanvas.height = h * 2;
+  canvasA.width = size;
+  canvasA.height = size;
+  canvasB.width = size;
+  canvasB.height = size;
   
-  simA.resize(w, h);
-  simB.resize(w, h);
+  canvasA.style.width = `${size}px`;
+  canvasA.style.height = `${size}px`;
+  canvasB.style.width = `${size}px`;
+  canvasB.style.height = `${size}px`;
   
-  gpuParamsA.aspect = w / h;
-  gpuParamsB.aspect = w / h;
+  paintCanvas.width = size * 2;
+  paintCanvas.height = size * 2;
+  
+  simA.resize(size, size);
+  simB.resize(size, size);
+  
+  gpuParamsA.aspect = 1.0;
+  gpuParamsB.aspect = 1.0;
 }
 
 function updateStats() {
@@ -529,15 +539,16 @@ async function start() {
   // Set default solver code in editor (MacCormack)
   shaderEditor.value = presets['mac-cormack'];
   
-  // Initialize canvas resolutions
+  // Initialize canvas resolutions as square
   const w = Math.floor(canvasA.parentElement!.clientWidth) || 800;
   const h = Math.floor(canvasA.parentElement!.clientHeight) || 600;
-  canvasA.width = w;
-  canvasA.height = h;
-  canvasB.width = w;
-  canvasB.height = h;
-  paintCanvas.width = w * 2;
-  paintCanvas.height = h * 2;
+  const size = Math.min(w, h);
+  canvasA.width = size;
+  canvasA.height = size;
+  canvasB.width = size;
+  canvasB.height = size;
+  paintCanvas.width = size * 2;
+  paintCanvas.height = size * 2;
 
   // Initialize contexts
   await simA.init(canvasA);
