@@ -18,12 +18,13 @@ const currentImageSrc = ref('')
 const modelsList = ref<any[]>([])
 const selectedModel = ref<any>(null)
 const isShiftPressed = ref(false)
-const isQPressed = ref(false)
+const isQPressed = ref(true)
 const isGPressed = ref(false)
 const isHoldActive = ref(false)
 const activePalette = ref<string[]>(['#00A0B0', '#6A4A3C', '#CC333F', '#EB6841', '#EDC951'])
 const isColorLocked = ref(false)
-const isPersistentSource = ref(false) // New: Sticky paint sources
+const isPersistentSource = ref(true) // New: Sticky paint sources
+let initialQuiversInjected = false
 const activeStampUrl = ref<string | null>(null)
 const activeStampImage = ref<HTMLImageElement | null>(null)
 
@@ -50,6 +51,7 @@ const handleSelectPainting = (url: string) => {
   console.log('Throwing painting in the water:', url)
   clearTextures()
   clearSource()
+  resetMassStats()
   if (paintCtx) {
     paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height)
   }
@@ -63,10 +65,11 @@ const handleSelectPainting = (url: string) => {
       
       // Upload the paint canvas to WebGPU immediately
       updatePaintTexture(paintCanvas)
-      
+
       // Copy paintTex directly to simulation textures to initialize state at 100% opacity
-      loadPaintCanvasToSimulation()
-      
+      // Use true to CLEAR existing state when throwing a new painting
+      loadPaintCanvasToSimulation(true)
+
       // Clear 2D paint canvas if not in "Sticky" mode so it doesn't continually add paint
       if (!isPersistentSource.value) {
         paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height)
@@ -77,7 +80,7 @@ const handleSelectPainting = (url: string) => {
   img.src = url
 }
 
-const { init, render, resize, updateUVTexture, updatePaintTexture, clearTextures, clearSource, updateActiveColor, activeColor, loadPaintCanvasToSimulation } = useWebGPU()
+const { init, render, resize, updateUVTexture, updatePaintTexture, clearTextures, clearSource, updateActiveColor, activeColor, loadPaintCanvasToSimulation, getStats } = useWebGPU()
 
 const videoElement = ref<HTMLVideoElement | null>(null)
 const imageElement = ref<HTMLImageElement | null>(null)
@@ -133,7 +136,7 @@ const addGrid = () => {
   const h = paintCanvas.height
   const step = w / 16
   paintCtx.strokeStyle = 'white'
-  paintCtx.lineWidth = 0.4
+  paintCtx.lineWidth = 0.8
   for (let x = 0; x <= w; x += step) {
     paintCtx.beginPath(); paintCtx.moveTo(x, 0); paintCtx.lineTo(x, h); paintCtx.stroke()
   }
@@ -146,7 +149,8 @@ const addQuivers = () => {
   if (!paintCtx) return
   const w = paintCanvas.width
   const h = paintCanvas.height
-  const radius = 3.0 // 3px radius for high visibility
+  // Reduced radius (now 3.0, 2x bigger than 1.5)
+  const radius = 3.0 
   paintCtx.fillStyle = 'white'
   for (let i = 0; i < 200; i++) {
     const x = Math.random() * w
@@ -155,6 +159,20 @@ const addQuivers = () => {
     paintCtx.arc(x, y, radius, 0, Math.PI * 2)
     paintCtx.fill()
   }
+}
+
+const injectPattern = (type: 'grid' | 'quivers') => {
+  if (type === 'grid') addGrid()
+  else addQuivers()
+  
+  // 1. Upload to GPU
+  updatePaintTexture(paintCanvas)
+  
+  // 2. Additive Splash into simulation state
+  loadPaintCanvasToSimulation(false) 
+  
+  // NOTE: We no longer clear here. The startLoop() render function 
+  // will handle clearing based on isPersistentSource.value.
 }
 
 const toggleDrawing = () => {
@@ -337,10 +355,14 @@ const handleModelSelect = (model: any) => {
   // Clear textures and source when switching models
   clearTextures()
   clearSource()
+  resetMassStats()
   if (paintCtx) {
     paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height)
   }
+
+  // Set safe defaults before loading uniforms
   gpuParams.analytical = model.engine === 'analytical' ? 1.0 : 0.0
+  gpuParams.flipv = (model.engine === 'analytical') ? 0.0 : 1.0; 
   
   if (model.uniforms) {
     if (typeof model.uniforms.scale === 'number') {
@@ -381,11 +403,6 @@ const handleModelSelect = (model: any) => {
     currentSourceType.value = 'video'
     currentVideoSrc.value = getSourceUrl(model.uv?.src || '')
     currentImageSrc.value = ''
-    
-    if (videoElement.value) {
-      videoElement.value.load()
-      videoElement.value.play().catch(e => console.warn('Video play failed:', e))
-    }
   }
 }
 
@@ -403,7 +420,7 @@ const gpuParams = reactive<GPUParams>({
   uvScale: 1.6, // Slowed down by ~5x (from 8.0)
   flipv: 1.0,
   mouseRadius: 0.005,
-  decay: 1.0,
+  decay: 0.98,
   viscosity: 0.0,
   scheme: 0.0,
   analytical: 0.0
@@ -411,6 +428,59 @@ const gpuParams = reactive<GPUParams>({
 
 let gpuLayer: WebGPULayer | null = null
 let animationFrameId: number | null = null
+
+let maxMass = 0
+let maxPeak = 0
+let currentDissipation = 0
+let currentDiffusivity = 0
+let isFetchingStats = false
+
+const updateMainStats = () => {
+  if (isFetchingStats) return
+  isFetchingStats = true
+
+  getStats().then(statsData => {
+    if (statsData) {
+      const mass = statsData[0] / 1000.0
+      const peak = statsData[12] / 1000.0
+      
+      if (mass > maxMass) maxMass = mass
+      if (peak > maxPeak) maxPeak = peak
+      
+      currentDissipation = maxMass > 1.0 ? (1.0 - mass / maxMass) * 100.0 : 0.0
+      currentDiffusivity = maxPeak > 0.01 ? (1.0 - peak / maxPeak) * 100.0 : 0.0
+      
+      const statsEl = document.getElementById('main-stats')
+      if (statsEl) {
+        const massLabel = statsEl.children[1] as HTMLDivElement
+        const dissipLabel = statsEl.children[2] as HTMLDivElement
+        const diffusLabel = statsEl.children[3] as HTMLDivElement
+        if (massLabel) massLabel.textContent = `Mass: ${mass.toFixed(1)}`
+        if (dissipLabel) dissipLabel.textContent = `Dissip: ${currentDissipation.toFixed(1)}%`
+        if (diffusLabel) diffusLabel.textContent = `Diffus: ${currentDiffusivity.toFixed(1)}%`
+      }
+    }
+    isFetchingStats = false
+  }).catch(() => {
+    isFetchingStats = false
+  })
+}
+
+const resetMassStats = () => {
+  maxMass = 0
+  maxPeak = 0
+  currentDissipation = 0
+  currentDiffusivity = 0
+  const statsEl = document.getElementById('main-stats')
+  if (statsEl) {
+    const massLabel = statsEl.children[1] as HTMLDivElement
+    const dissipLabel = statsEl.children[2] as HTMLDivElement
+    const diffusLabel = statsEl.children[3] as HTMLDivElement
+    if (massLabel) massLabel.textContent = `Mass: 0.0`
+    if (dissipLabel) dissipLabel.textContent = `Dissip: 0.0%`
+    if (diffusLabel) diffusLabel.textContent = `Diffus: 0.0%`
+  }
+}
 
 onMounted(() => {
   timeInterval = setInterval(updateTime, 1000)
@@ -431,7 +501,7 @@ onMounted(() => {
     const canvas = gpuLayer.getCanvas()
     if (canvas) {
       canvas.style.mixBlendMode = 'screen'
-      init(canvas).then(() => {
+      init(canvas).then(async () => {
         gpuParams.aspect = canvas.width / canvas.height
         // Explicitly set initial state: Map navigation active
         leafletMap!.dragging.enable()
@@ -439,7 +509,7 @@ onMounted(() => {
         canvas.style.cursor = 'default'
         
         startLoop()
-        fetchModels()
+        await fetchModels()
       })
 
       window.addEventListener('mousedown', handleMouseDown)
@@ -455,16 +525,19 @@ onMounted(() => {
           console.log('Interaction: Clear Canvas')
           clearTextures()
           clearSource()
+          resetMassStats()
+          if (paintCtx) {
+            paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height)
+            updatePaintTexture(paintCanvas)
+          }
         }
         if (e.key.toLowerCase() === 'q') {
           console.log('Interaction: Add Quivers')
-          isQPressed.value = true
-          addQuivers()
+          injectPattern('quivers')
         }
         if (e.key.toLowerCase() === 'g') {
           console.log('Interaction: Add Grid')
-          isGPressed.value = true
-          addGrid()
+          injectPattern('grid')
         }
         if (e.key.toLowerCase() === 'p') console.log('Pause requested')
         if (e.key.toLowerCase() === 's') sidebarOpen.value = !sidebarOpen.value
@@ -479,22 +552,24 @@ onMounted(() => {
             gpuParams.isDrawing = 0.0
           }
         }
-        if (e.key.toLowerCase() === 'q') {
-          isQPressed.value = false
-        }
-        if (e.key.toLowerCase() === 'g') {
-          isGPressed.value = false
-        }
       })
     }
 
     gpuLayer.on('canvas-resize', (e: any) => {
+      const wasZero = paintCanvas.width === 0;
+      
       resize(e.width, e.height)
       gpuParams.aspect = e.width / e.height
       
       // Higher resolution for paint source (2x supersampling)
       paintCanvas.width = e.width * 2
       paintCanvas.height = e.height * 2
+
+      // Perform initial injection once we have valid dimensions
+      if (wasZero || !initialQuiversInjected) {
+        injectPattern('quivers')
+        initialQuiversInjected = true
+      }
     })
   }
 })
@@ -534,10 +609,6 @@ function startLoop() {
     gpuParams.mouseDirX *= 0.9
     gpuParams.mouseDirY *= 0.9
     
-    // Continuous pouring if keys are held down
-    if (isQPressed.value) addQuivers()
-    if (isGPressed.value) addGrid()
-    
     // Auto-cycle palette if drawing and not locked to a specific color
     if (gpuParams.isDrawing > 0.5 && activePalette.value.length > 0 && !isColorLocked.value) {
       colorFrameCount++
@@ -565,13 +636,34 @@ function startLoop() {
     
     render(gpuParams)
 
+    // Update stats overlay periodically
+    if (Math.floor(gpuParams.time * 100) % 10 === 0) {
+      updateMainStats()
+    }
+
     // Clear 2D paint canvas if not in "Sticky" mode
     if (!isPersistentSource.value && paintCtx) {
       paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height)
     }
 
+    // Update FPS label in stats overlay
+    const now = performance.now()
+    if (now - lastTime >= 1000) {
+      const fps = Math.round((frameCount * 1000) / (now - lastTime))
+      frameCount = 0
+      lastTime = now
+      const statsEl = document.getElementById('main-stats')
+      if (statsEl) {
+        const fpsLabel = statsEl.children[0] as HTMLDivElement
+        if (fpsLabel) fpsLabel.textContent = `FPS: ${fps}`
+      }
+    }
+    frameCount++
+
     animationFrameId = requestAnimationFrame(frame)
   }
+  let frameCount = 0
+  let lastTime = performance.now()
   frame()
 }
 
@@ -591,6 +683,16 @@ onUnmounted(() => {
   >
     <!-- Base Layer: Map -->
     <div ref="mapContainer" class="absolute inset-0 z-0"></div>
+
+    <!-- Stats Overlay -->
+    <div class="absolute top-24 left-6 z-20 pointer-events-none">
+      <div id="main-stats" class="glass-panel px-2.5 py-1.5 rounded-lg border border-white/10 text-[10px] font-mono text-slate-400 backdrop-blur flex flex-col gap-0.5 min-w-20">
+        <div>FPS: --</div>
+        <div>Mass: --</div>
+        <div>Dissip: --%</div>
+        <div>Diffus: --%</div>
+      </div>
+    </div>
 
     <!-- Hidden Video Source -->
     <video 
@@ -717,16 +819,15 @@ onUnmounted(() => {
                   <div>
                     <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Domain Actions</h2>
                     <div class="grid grid-cols-2 gap-2">
-                       <button @click="addGrid" class="glass-panel py-2 rounded-lg bg-white/5 border border-white/5 text-[10px] uppercase font-bold text-slate-300 hover:bg-sky-500/20 hover:border-sky-500/50 transition-all flex items-center justify-center gap-2">
+                       <button @click="injectPattern('grid')" class="glass-panel py-2 rounded-lg bg-white/5 border border-white/5 text-[10px] uppercase font-bold text-slate-300 hover:bg-sky-500/20 hover:border-sky-500/50 transition-all flex items-center justify-center gap-2">
                           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
                           Add Grid
                        </button>
-                       <button @click="addQuivers" class="glass-panel py-2 rounded-lg bg-white/5 border border-white/5 text-[10px] uppercase font-bold text-slate-300 hover:bg-sky-500/20 hover:border-sky-500/50 transition-all flex items-center justify-center gap-2">
+                       <button @click="injectPattern('quivers')" class="glass-panel py-2 rounded-lg bg-white/5 border border-white/5 text-[10px] uppercase font-bold text-slate-300 hover:bg-sky-500/20 hover:border-sky-500/50 transition-all flex items-center justify-center gap-2">
                           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                           Add Quivers
                        </button>
-                    </div>
-                  </div>
+                    </div>                  </div>
 
                   <div>
                     <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Source Persistence</h2>

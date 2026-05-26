@@ -101,7 +101,17 @@ export function useWebGPU() {
       sourcePipe = device.createRenderPipeline({
         layout: 'auto',
         vertex: { module: shaderModule, entryPoint: 'vertex_main' },
-        fragment: { module: shaderModule, entryPoint: 'source_main', targets: [{ format: 'rgba16float' }] },
+        fragment: { 
+          module: shaderModule, 
+          entryPoint: 'source_main', 
+          targets: [{ 
+            format: 'rgba16float',
+            blend: {
+              color: { operation: 'add', srcFactor: 'one', dstFactor: 'one' },
+              alpha: { operation: 'add', srcFactor: 'one', dstFactor: 'one' }
+            }
+          }] 
+        },
         primitive: { topology: 'triangle-list' }
       });
 
@@ -258,7 +268,7 @@ export function useWebGPU() {
     if (!device) return;
     
     const commandEncoder = device.createCommandEncoder();
-    [...textures, sourceTex].forEach(texture => {
+    [...textures, sourceTex, uvTex].forEach(texture => {
       const passEncoder = commandEncoder.beginRenderPass({
         colorAttachments: [{
           view: texture.createView(),
@@ -450,16 +460,16 @@ export function useWebGPU() {
     }
   }
 
-  function loadPaintCanvasToSimulation() {
+  function loadPaintCanvasToSimulation(shouldClear = false) {
     if (!device || !isInitialized.value) return;
     const commandEncoder = device.createCommandEncoder();
     
-    // Render the paintTex content into both advection textures to set the initial state
+    // Render the paintTex content into both advection textures
     for (let i = 0; i < 2; i++) {
       const passEncoder = commandEncoder.beginRenderPass({
         colorAttachments: [{
           view: textures[i].createView(),
-          loadOp: 'clear',
+          loadOp: shouldClear ? 'clear' : 'load',
           clearValue: { r: 0, g: 0, b: 0, a: 0 },
           storeOp: 'store'
         }]

@@ -244,12 +244,20 @@ fn stats_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoc
     if (id.x < dim.x && id.y < dim.y) {
         let p = textureLoad(statsTex, id.xy, 0);
         // Fixed point conversion for atomics
-        atomicAdd(&localStats[0], u32(max(0.0, p.r) * 100.0));
-        atomicAdd(&localStats[1], u32(max(0.0, p.g) * 100.0));
-        atomicAdd(&localStats[2], u32(max(0.0, p.b) * 100.0));
+        // Use concentration (alpha) for total mass calculation. 
+        // 1000.0 multiplier provides sub-pixel precision for faint pigment.
+        let concentration = max(0.0, p.a);
+        atomicAdd(&localStats[0], u32(concentration * 1000.0));
+        
+        // Track peak concentration (Diffusivity metric)
+        // Store max in index 12
+        atomicMax(&localStats[12], u32(concentration * 1000.0));
 
-        let density = (p.r + p.g + p.b);
-        let bin = u32(clamp(density * 2.0, 0.0, 9.0));
+        // Secondary stats: raw pigment sums
+        atomicAdd(&localStats[1], u32(max(0.0, p.r) * 100.0));
+        atomicAdd(&localStats[2], u32(max(0.0, p.g) * 100.0));
+
+        let bin = u32(clamp(concentration * 6.0, 0.0, 9.0));
         atomicAdd(&localStats[3 + bin], 1u);
     }
     workgroupBarrier();

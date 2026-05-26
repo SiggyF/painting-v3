@@ -38,11 +38,19 @@ const btnQuivers = document.getElementById('btn-quivers') as HTMLButtonElement;
 const btnSlotted = document.getElementById('btn-slotted') as HTMLButtonElement;
 const btnClear = document.getElementById('btn-clear') as HTMLButtonElement;
 const btnToggle = document.getElementById('btn-toggle') as HTMLButtonElement;
+const paramBlueprintOpacity = document.getElementById('param-blueprint-opacity') as HTMLInputElement;
+const labelBlueprintOpacity = document.getElementById('label-blueprint-opacity') as HTMLSpanElement;
+const checkAutostop = document.getElementById('check-autostop') as HTMLInputElement;
+const labelAutostopStatus = document.getElementById('label-autostop-status') as HTMLSpanElement;
 
 const statsA = document.getElementById('stats-a') as HTMLDivElement;
 const statsB = document.getElementById('stats-b') as HTMLDivElement;
 const stepsLabelA = document.getElementById('timesteps-a') as HTMLSpanElement;
 const stepsLabelB = document.getElementById('timesteps-b') as HTMLSpanElement;
+const svgA = document.getElementById('svg-overlay-a') as HTMLElement;
+const svgB = document.getElementById('svg-overlay-b') as HTMLElement;
+const shapeA = document.getElementById('analytical-shape-a') as HTMLElement;
+const shapeB = document.getElementById('analytical-shape-b') as HTMLElement;
 
 // Initialize independent WebGPU simulations
 const simA = useWebGPU();
@@ -54,6 +62,98 @@ const paintCtx = paintCanvas.getContext('2d')!;
 
 let totalSteps = 0;
 let isPaused = true;
+let blueprintOpacity = 0.8;
+let analyticalInjectionTime = -1.0;
+let activePatternType: 'cylinder' | 'grid' | null = null;
+
+const BLUEPRINT_COLOR = "#38bdf8";
+
+// Corrected Zalesak path (C-shape outline) centered at (0.5, 0.7)
+const ZALESAK_PATH = `M 0.515 0.551 
+                    A 0.15 0.15 0 1 1 0.485 0.551
+                    L 0.485 0.77 L 0.515 0.77 Z`;
+
+function getGridPath() {
+  const side = 0.5 * Math.sqrt(2);
+  const min = 0.5 - side / 2;
+  const max = 0.5 + side / 2;
+  const step = (max - min) / 12;
+  let d = '';
+  for (let i = 0; i <= 12; i++) {
+    const x = min + i * step;
+    d += `M ${x} ${min} L ${x} ${max} `;
+    const y = min + i * step;
+    d += `M ${min} ${y} L ${max} ${y} `;
+  }
+  return d;
+}
+
+function updateOverlayShape() {
+  const path = activePatternType === 'grid' ? getGridPath() : ZALESAK_PATH;
+  const pathHTML = `<path d="${path}" stroke="${BLUEPRINT_COLOR}" stroke-width="2.0" fill="none" vector-effect="non-scaling-stroke" stroke-opacity="0.8" />`;
+  if (shapeA) shapeA.innerHTML = pathHTML;
+  if (shapeB) shapeB.innerHTML = pathHTML;
+}
+
+function updateAnalyticalOverlay() {
+  if (analyticalInjectionTime < 0 || !svgA || !svgB || blueprintOpacity <= 0) {
+    if (svgA) svgA.style.opacity = '0';
+    if (svgB) svgB.style.opacity = '0';
+    return;
+  }
+  
+  const type = gpuParamsA.analytical;
+  if (type < 0.5) {
+    if (svgA) svgA.style.opacity = '0';
+    if (svgB) svgB.style.opacity = '0';
+    return;
+  }
+
+  svgA.style.opacity = blueprintOpacity.toString();
+  svgB.style.opacity = blueprintOpacity.toString();
+  
+  // Exact Pixel Alignment: Sync SVG to Canvas using offset properties
+  svgA.style.left = `${canvasA.offsetLeft}px`;
+  svgA.style.top = `${canvasA.offsetTop}px`;
+  svgA.style.width = `${canvasA.offsetWidth}px`;
+  svgA.style.height = `${canvasA.offsetHeight}px`;
+
+  svgB.style.left = `${canvasB.offsetLeft}px`;
+  svgB.style.top = `${canvasB.offsetTop}px`;
+  svgB.style.width = `${canvasB.offsetWidth}px`;
+  svgB.style.height = `${canvasB.offsetHeight}px`;
+  
+  const dt = gpuParamsA.time - analyticalInjectionTime;
+  const speed = gpuParamsA.speed;
+  const scale = gpuParamsA.uvScale;
+  
+  const effectiveSpeed = 0.5 * speed * scale;
+  let transform = '';
+  
+  if (type > 0.5 && type < 1.5) {
+    const theta = (effectiveSpeed * dt) * (180 / Math.PI); 
+    transform = `rotate(${theta}, 0.5, 0.5)`;
+  } else if (type > 1.5 && type < 2.5) {
+    const dx = effectiveSpeed * dt;
+    transform = `translate(${dx}, 0)`;
+  } else if (type > 2.5) {
+    const t = gpuParamsA.time;
+    const t0 = analyticalInjectionTime;
+    const getIntegral = (val: number) => {
+      const full = Math.floor(val);
+      const rem = val - full;
+      let disp = 0;
+      for(let i=0; i<full; i++) disp += (i % 2 === 0) ? 1 : -1;
+      disp += (full % 2 === 0) ? rem : -rem;
+      return disp;
+    };
+    const disp = (getIntegral(t) - getIntegral(t0)) * effectiveSpeed;
+    transform = `translate(${disp}, ${-disp})`;
+  }
+  
+  if (shapeA) shapeA.setAttribute('transform', transform);
+  if (shapeB) shapeB.setAttribute('transform', transform);
+}
 
 function updatePlayPauseUI() {
   if (isPaused) {
@@ -107,33 +207,49 @@ let modelsList: any[] = [];
 
 let maxMassA = 0;
 let maxMassB = 0;
+let maxPeakA = 0;
+let maxPeakB = 0;
 let currentDissipationA = 0;
 let currentDissipationB = 0;
+let currentDiffusivityA = 0;
+let currentDiffusivityB = 0;
 let isFetchingStats = false;
 
 function resetMassStats() {
   maxMassA = 0;
   maxMassB = 0;
+  maxPeakA = 0;
+  maxPeakB = 0;
   currentDissipationA = 0;
   currentDissipationB = 0;
-  const labelA = statsA.children[1] as HTMLDivElement;
-  if (labelA) labelA.textContent = `Dissip: 0.0%`;
-  const labelB = statsB.children[1] as HTMLDivElement;
-  if (labelB) labelB.textContent = `Dissip: 0.0%`;
+  currentDiffusivityA = 0;
+  currentDiffusivityB = 0;
+
+  const massLabelA = statsA.children[1] as HTMLDivElement;
+  const dissipLabelA = statsA.children[2] as HTMLDivElement;
+  const diffusLabelA = statsA.children[3] as HTMLDivElement;
+  if (massLabelA) massLabelA.textContent = `Mass: 0.0`;
+  if (dissipLabelA) dissipLabelA.textContent = `Dissip: 0.0%`;
+  if (diffusLabelA) diffusLabelA.textContent = `Diffus: 0.0%`;
+  
+  const massLabelB = statsB.children[1] as HTMLDivElement;
+  const dissipLabelB = statsB.children[2] as HTMLDivElement;
+  const diffusLabelB = statsB.children[3] as HTMLDivElement;
+  if (massLabelB) massLabelB.textContent = `Mass: 0.0`;
+  if (dissipLabelB) dissipLabelB.textContent = `Dissip: 0.0%`;
+  if (diffusLabelB) diffusLabelB.textContent = `Diffus: 0.0%`;
 }
 
 // Synchronized continuous paint triggers
 let isQPressed = false;
 let isGPressed = false;
 
-
-
 // Mirror quivers injection
 function addQuivers() {
   resetMassStats();
   const w = paintCanvas.width;
   const h = paintCanvas.height;
-  const radius = 3.0; // 3px radius for high visibility
+  const radius = 3.0; // Increased radius (2x bigger than 1.5)
   paintCtx.fillStyle = '#ffffff';
   for (let i = 0; i < 200; i++) {
     const x = Math.random() * w;
@@ -150,17 +266,19 @@ function addGrid() {
   const w = paintCanvas.width;
   const h = paintCanvas.height;
 
-  // Grid should be a square of side 0.5 * sqrt(2) centered at (0.5, 0.5)
-  // to ensure it stays within a radius of 0.5 from the center during rotation.
+  analyticalInjectionTime = gpuParamsA.time;
+  activePatternType = 'grid';
+  updateOverlayShape();
+  
   const side = 0.5 * Math.sqrt(2);
   const xMin = (0.5 - side / 2) * w;
   const xMax = (0.5 + side / 2) * w;
   const yMin = (0.5 - side / 2) * h;
   const yMax = (0.5 + side / 2) * h;
   
-  const step = (xMax - xMin) / 12; // 12 subdivisions
+  const step = (xMax - xMin) / 12;
   paintCtx.strokeStyle = '#ffffff';
-  paintCtx.lineWidth = 0.4;
+  paintCtx.lineWidth = 4.0;
 
   for (let x = xMin; x <= xMax + 0.1; x += step) {
     paintCtx.beginPath(); paintCtx.moveTo(x, yMin); paintCtx.lineTo(x, yMax); paintCtx.stroke();
@@ -175,30 +293,27 @@ function addSlottedCylinder() {
   resetMassStats();
   const w = paintCanvas.width;
   const h = paintCanvas.height;
+
+  analyticalInjectionTime = gpuParamsA.time;
+  activePatternType = 'cylinder';
+  updateOverlayShape();
   
-  // Center of slotted cylinder at (0.5, 0.7)
   const cx = 0.5 * w;
   const cy = 0.7 * h;
   const r = 0.15 * Math.min(w, h);
   const slotW = 0.04 * Math.min(w, h);
   const slotH = 0.22 * Math.min(w, h);
   
-  // Clear any existing paint to start fresh
   paintCtx.clearRect(0, 0, w, h);
-  
-  // Draw cylinder
   paintCtx.fillStyle = '#ffffff';
   paintCtx.beginPath();
   paintCtx.arc(cx, cy, r, 0, Math.PI * 2);
   paintCtx.fill();
   
-  // Subtract slot using globalCompositeOperation 'destination-out'
   paintCtx.globalCompositeOperation = 'destination-out';
   paintCtx.beginPath();
   paintCtx.rect(cx - slotW / 2, cy - r, slotW, slotH);
   paintCtx.fill();
-  
-  // Restore default composition
   paintCtx.globalCompositeOperation = 'source-over';
 }
 
@@ -230,7 +345,6 @@ function handleInteractionEnd() {
 function updateMouseCoordinates(e: MouseEvent, canvas: HTMLCanvasElement) {
   const rect = canvas.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return;
-  
   const nx = (e.clientX - rect.left) / rect.width;
   const ny = (e.clientY - rect.top) / rect.height;
   
@@ -249,14 +363,11 @@ function updateMouseCoordinates(e: MouseEvent, canvas: HTMLCanvasElement) {
   gpuParamsB.mouseY = ny;
 }
 
-// Dynamic shader recompilation
 async function recompileShader() {
   compilerStatus.className = 'w-2 h-2 rounded-full bg-amber-500 animate-pulse';
   compilerLogs.textContent = 'Compiling and rebuilding WebGPU pipeline...';
-  
   const code = shaderEditor.value;
   const result = await simB.compileAdvectPipeline(code);
-  
   if (result.success) {
     compilerStatus.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
     compilerLogs.textContent = 'Shader pipeline compilation successful.';
@@ -267,12 +378,11 @@ async function recompileShader() {
 }
 
 function resize() {
-  const w = Math.floor(canvasA.parentElement!.clientWidth) || 800;
-  const h = Math.floor(canvasA.parentElement!.clientHeight) || 600;
+  const container = canvasA.parentElement!.parentElement!;
+  const w = Math.floor(container.clientWidth) || 800;
+  const h = Math.floor(container.clientHeight) || 600;
   if (w <= 0 || h <= 0) return;
-  
-  // Calculate the largest square size that fits the available container area
-  const size = Math.min(w, h);
+  const size = Math.min(w - 64, h - 64); 
   
   canvasA.width = size;
   canvasA.height = size;
@@ -289,9 +399,6 @@ function resize() {
   
   simA.resize(size, size);
   simB.resize(size, size);
-  
-  gpuParamsA.aspect = 1.0;
-  gpuParamsB.aspect = 1.0;
 }
 
 function updateStats() {
@@ -299,30 +406,43 @@ function updateStats() {
   isFetchingStats = true;
   
   Promise.all([simA.getStats(), simB.getStats()]).then(([statsAData, statsBData]) => {
+    const fpsLabelA = statsA.children[0] as HTMLDivElement;
+    const massLabelA = statsA.children[1] as HTMLDivElement;
+    const dissipLabelA = statsA.children[2] as HTMLDivElement;
+    const diffusLabelA = statsA.children[3] as HTMLDivElement;
+    
+    const fpsLabelB = statsB.children[0] as HTMLDivElement;
+    const massLabelB = statsB.children[1] as HTMLDivElement;
+    const dissipLabelB = statsB.children[2] as HTMLDivElement;
+    const diffusLabelB = statsB.children[3] as HTMLDivElement;
+
     if (statsAData) {
-      const mass = (statsAData[0] + statsAData[1] + statsAData[2]) / 100.0;
+      const mass = statsAData[0] / 1000.0;
+      const peak = statsAData[12] / 1000.0;
       if (mass > maxMassA) maxMassA = mass;
+      if (peak > maxPeakA) maxPeakA = peak;
       currentDissipationA = maxMassA > 1.0 ? (1.0 - mass / maxMassA) * 100.0 : 0.0;
+      currentDiffusivityA = maxPeakA > 0.01 ? (1.0 - peak / maxPeakA) * 100.0 : 0.0;
+      if (massLabelA) massLabelA.textContent = `Mass: ${mass.toFixed(1)}`;
+      if (dissipLabelA) dissipLabelA.textContent = `Dissip: ${currentDissipationA.toFixed(1)}%`;
+      if (diffusLabelA) diffusLabelA.textContent = `Diffus: ${currentDiffusivityA.toFixed(1)}%`;
     }
+
     if (statsBData) {
-      const mass = (statsBData[0] + statsBData[1] + statsBData[2]) / 100.0;
+      const mass = statsBData[0] / 1000.0;
+      const peak = statsBData[12] / 1000.0;
       if (mass > maxMassB) maxMassB = mass;
+      if (peak > maxPeakB) maxPeakB = peak;
       currentDissipationB = maxMassB > 1.0 ? (1.0 - mass / maxMassB) * 100.0 : 0.0;
+      currentDiffusivityB = maxPeakB > 0.01 ? (1.0 - peak / maxPeakB) * 100.0 : 0.0;
+      if (massLabelB) massLabelB.textContent = `Mass: ${mass.toFixed(1)}`;
+      if (dissipLabelB) dissipLabelB.textContent = `Dissip: ${currentDissipationB.toFixed(1)}%`;
+      if (diffusLabelB) diffusLabelB.textContent = `Diffus: ${currentDiffusivityB.toFixed(1)}%`;
     }
-    
-    // Update live dissipation display
-    const labelA = statsA.children[1] as HTMLDivElement;
-    if (labelA) labelA.textContent = `Dissip: ${currentDissipationA.toFixed(1)}%`;
-    const labelB = statsB.children[1] as HTMLDivElement;
-    if (labelB) labelB.textContent = `Dissip: ${currentDissipationB.toFixed(1)}%`;
-    
     isFetchingStats = false;
-  }).catch(() => {
-    isFetchingStats = false;
-  });
+  }).catch(() => { isFetchingStats = false; });
 }
 
-// Main render loop
 let frameCount = 0;
 let lastTime = performance.now();
 let fps = 60;
@@ -331,21 +451,34 @@ function loop() {
   if (!isPaused) {
     gpuParamsA.time += 0.01;
     gpuParamsB.time += 0.01;
+    if (checkAutostop && checkAutostop.checked && gpuParamsA.analytical > 0.5 && gpuParamsA.analytical < 1.5) {
+      const dt = analyticalInjectionTime >= 0 ? (gpuParamsA.time - analyticalInjectionTime) : gpuParamsA.time;
+      const effectiveSpeed = 0.5 * gpuParamsA.speed * gpuParamsA.uvScale;
+      const revs = (effectiveSpeed * dt) / (2 * Math.PI);
+      if (labelAutostopStatus) {
+        labelAutostopStatus.textContent = `Rev: ${revs.toFixed(2)}`;
+        labelAutostopStatus.className = 'text-[8px] font-mono text-emerald-400 uppercase';
+      }
+      if (revs >= 1.0) {
+        isPaused = true;
+        updatePlayPauseUI();
+        if (labelAutostopStatus) labelAutostopStatus.textContent = "Stopped (1x)";
+      }
+    } else if (labelAutostopStatus) {
+      labelAutostopStatus.textContent = "Ready";
+      labelAutostopStatus.className = 'text-[8px] font-mono text-slate-600 uppercase';
+    }
   }
 
+  updateAnalyticalOverlay();
   gpuParamsA.mouseDirX *= 0.9;
   gpuParamsA.mouseDirY *= 0.9;
   gpuParamsB.mouseDirX *= 0.9;
   gpuParamsB.mouseDirY *= 0.9;
 
-  if (isQPressed) addQuivers();
-  if (isGPressed) addGrid();
-
-  // Upload offscreen draw buffer to both simulations
   simA.updatePaintTexture(paintCanvas);
   simB.updatePaintTexture(paintCanvas);
 
-  // Update Flow source
   if (currentSourceType === 'video' && videoElement.readyState >= 2) {
     if (videoElement.paused) videoElement.play().catch(() => {});
     simA.updateUVTexture(videoElement);
@@ -355,56 +488,42 @@ function loop() {
     simB.updateUVTexture(imageElement);
   }
 
-  // Pass zero speed when paused to freeze advection while still allowing input/rendering
   const currentParamsA = { ...gpuParamsA, speed: isPaused ? 0.0 : gpuParamsA.speed };
   const currentParamsB = { ...gpuParamsB, speed: isPaused ? 0.0 : gpuParamsB.speed };
-  
   simA.render(currentParamsA);
   simB.render(currentParamsB);
 
-  // Update timestep display
   if (!isPaused) {
     totalSteps++;
     if (stepsLabelA) stepsLabelA.textContent = `Steps: ${totalSteps}`;
     if (stepsLabelB) stepsLabelB.textContent = `Steps: ${totalSteps}`;
   }
 
-  // Clear offscreen draw canvas if non-sticky
   if (!isPersistentSource) {
     paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
   }
   
-  // Fetch stats periodically
-  if (frameCount % 10 === 0) {
-    updateStats();
-  }
+  if (frameCount % 10 === 0) updateStats();
   
-  // Track performance metrics
   frameCount++;
   const now = performance.now();
   if (now - lastTime >= 1000) {
     fps = Math.round((frameCount * 1000) / (now - lastTime));
     frameCount = 0;
     lastTime = now;
-    
-    // Update dashboard FPS overlays
     const fpsLabelA = statsA.children[0] as HTMLDivElement;
     if (fpsLabelA) fpsLabelA.textContent = `FPS: ${fps}`;
     const fpsLabelB = statsB.children[0] as HTMLDivElement;
     if (fpsLabelB) fpsLabelB.textContent = `FPS: ${fps}`;
   }
-  
   requestAnimationFrame(loop);
 }
 
-// Load flow domain models
 async function initModels() {
   try {
     const res = await fetch(`${import.meta.env.BASE_URL}data/models.json`);
     const data = await res.json();
     modelsList = data.models || [];
-    
-    // Populate model selector dropdown
     modelSelect.innerHTML = '';
     modelsList.forEach((m: any, idx: number) => {
       const opt = document.createElement('option');
@@ -412,16 +531,11 @@ async function initModels() {
       opt.textContent = `${m.title} (${m.engine})`;
       modelSelect.appendChild(opt);
     });
-    
-    // Load default model (Analytical circular case is index 6, let's select it if present)
     const circularIdx = modelsList.findIndex(m => m.title.toLowerCase().includes('circular'));
     const defaultIdx = circularIdx !== -1 ? circularIdx : 0;
     modelSelect.value = defaultIdx.toString();
     loadModel(modelsList[defaultIdx]);
-    
-  } catch (err) {
-    console.error('Error fetching models:', err);
-  }
+  } catch (err) { console.error('Error fetching models:', err); }
 }
 
 function loadModel(model: any) {
@@ -429,24 +543,20 @@ function loadModel(model: any) {
   simA.clearSource();
   simB.clearTextures();
   simB.clearSource();
-  
   paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
   resetMassStats();
   totalSteps = 0;
-  
+  analyticalInjectionTime = -1.0;
   gpuParamsA.analytical = model.engine === 'analytical' ? (model.analyticalValue || 1.0) : 0.0;
   gpuParamsB.analytical = model.engine === 'analytical' ? (model.analyticalValue || 1.0) : 0.0;
+  gpuParamsA.flipv = (model.engine === 'analytical') ? 0.0 : 1.0;
+  gpuParamsB.flipv = (model.engine === 'analytical') ? 0.0 : 1.0;
   gpuParamsA.time = 0.0;
   gpuParamsB.time = 0.0;
-  
   if (model.uniforms) {
     if (typeof model.uniforms.scale === 'number') {
       gpuParamsA.uvScale = model.uniforms.scale;
       gpuParamsB.uvScale = model.uniforms.scale;
-    }
-    if (typeof model.uniforms.flipv === 'boolean') {
-      gpuParamsA.flipv = model.uniforms.flipv ? 1.0 : 0.0;
-      gpuParamsB.flipv = model.uniforms.flipv ? 1.0 : 0.0;
     }
     if (typeof model.uniforms.decay === 'number') {
       gpuParamsA.decay = model.uniforms.decay;
@@ -455,11 +565,9 @@ function loadModel(model: any) {
       labelDecay.textContent = `${(model.uniforms.decay * 100).toFixed(2)}%`;
     }
   }
-  
   const tag = model.uv?.tag || 'video';
   const cleanSrc = model.uv?.src ? (model.uv.src.startsWith('/') ? model.uv.src.slice(1) : model.uv.src) : '';
   const url = `${import.meta.env.BASE_URL}${cleanSrc}`;
-  
   if (tag === 'img' || tag === 'image') {
     currentSourceType = 'image';
     imageElement.src = url;
@@ -468,140 +576,109 @@ function loadModel(model: any) {
     currentSourceType = 'video';
     videoElement.src = url.endsWith('.webm') ? url.replace('.webm', '.mp4') : url;
     imageElement.src = '';
-    videoElement.load();
-    videoElement.play().catch(() => {});
   }
 }
 
-// Bind UI event listeners
 function bindEvents() {
-  // Play/Pause toggle
-  btnToggle.addEventListener('click', () => {
-    isPaused = !isPaused;
-    updatePlayPauseUI();
+  btnToggle.addEventListener('click', () => { isPaused = !isPaused; updatePlayPauseUI(); });
+  paramBlueprintOpacity.addEventListener('input', () => {
+    blueprintOpacity = parseFloat(paramBlueprintOpacity.value);
+    labelBlueprintOpacity.textContent = `${Math.round(blueprintOpacity * 100)}%`;
+    updateAnalyticalOverlay();
   });
-
-  // Canvases drawing listeners (A & B mirror automatically)
   canvasA.addEventListener('mousedown', (e) => handleInteractionStart(e, canvasA));
   canvasA.addEventListener('mousemove', (e) => handleInteractionMove(e, canvasA));
   window.addEventListener('mouseup', handleInteractionEnd);
-
   canvasB.addEventListener('mousedown', (e) => handleInteractionStart(e, canvasB));
   canvasB.addEventListener('mousemove', (e) => handleInteractionMove(e, canvasB));
-
-  // Controls sliders
   paramSpeed.addEventListener('input', () => {
     const val = parseFloat(paramSpeed.value);
-    gpuParamsA.speed = val;
-    gpuParamsB.speed = val;
+    gpuParamsA.speed = val; gpuParamsB.speed = val;
     labelSpeed.textContent = `${val.toFixed(2)}x`;
   });
-
   paramDecay.addEventListener('input', () => {
     const val = parseFloat(paramDecay.value);
-    gpuParamsA.decay = val;
-    gpuParamsB.decay = val;
+    gpuParamsA.decay = val; gpuParamsB.decay = val;
     labelDecay.textContent = `${(val * 100).toFixed(2)}%`;
   });
-
   paramViscosity.addEventListener('input', () => {
     const val = parseFloat(paramViscosity.value);
-    gpuParamsA.viscosity = val;
-    gpuParamsB.viscosity = val;
+    gpuParamsA.viscosity = val; gpuParamsB.viscosity = val;
     labelViscosity.textContent = val.toFixed(3);
   });
-
-  // Model Selection Dropdown
-  modelSelect.addEventListener('change', () => {
-    const idx = parseInt(modelSelect.value);
-    loadModel(modelsList[idx]);
+  modelSelect.addEventListener('change', () => loadModel(modelsList[parseInt(modelSelect.value)]));
+  
+  btnGrid.addEventListener('click', () => {
+    addGrid();
+    simA.updatePaintTexture(paintCanvas);
+    simB.updatePaintTexture(paintCanvas);
+    simA.loadPaintCanvasToSimulation(false);
+    simB.loadPaintCanvasToSimulation(false);
+    paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+    simA.updatePaintTexture(paintCanvas);
+    simB.updatePaintTexture(paintCanvas);
   });
 
-  // Action Buttons
-  btnGrid.addEventListener('mousedown', () => { isGPressed = true; });
-  btnGrid.addEventListener('mouseup', () => { isGPressed = false; });
-  btnGrid.addEventListener('mouseleave', () => { isGPressed = false; });
-
-  btnQuivers.addEventListener('mousedown', () => { isQPressed = true; });
-  btnQuivers.addEventListener('mouseup', () => { isQPressed = false; });
-  btnQuivers.addEventListener('mouseleave', () => { isQPressed = false; });
+  btnQuivers.addEventListener('click', () => {
+    addQuivers();
+    simA.updatePaintTexture(paintCanvas);
+    simB.updatePaintTexture(paintCanvas);
+    simA.loadPaintCanvasToSimulation(false);
+    simB.loadPaintCanvasToSimulation(false);
+    paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+    simA.updatePaintTexture(paintCanvas);
+    simB.updatePaintTexture(paintCanvas);
+  });
 
   btnSlotted.addEventListener('click', () => {
     addSlottedCylinder();
-    simA.loadPaintCanvasToSimulation();
-    simB.loadPaintCanvasToSimulation();
+    simA.updatePaintTexture(paintCanvas);
+    simB.updatePaintTexture(paintCanvas);
+    simA.loadPaintCanvasToSimulation(false);
+    simB.loadPaintCanvasToSimulation(false);
+    paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+    simA.updatePaintTexture(paintCanvas);
+    simB.updatePaintTexture(paintCanvas);
   });
 
   btnClear.addEventListener('click', () => {
-    simA.clearTextures();
-    simA.clearSource();
-    simB.clearTextures();
-    simB.clearSource();
+    simA.clearTextures(); simA.clearSource();
+    simB.clearTextures(); simB.clearSource();
     paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
-    resetMassStats();
-    totalSteps = 0;
-    gpuParamsA.time = 0;
-    gpuParamsB.time = 0;
-    isPaused = true;
-    updatePlayPauseUI();
+    resetMassStats(); totalSteps = 0; gpuParamsA.time = 0; gpuParamsB.time = 0;
+    analyticalInjectionTime = -1.0; isPaused = true; updatePlayPauseUI();
     if (stepsLabelA) stepsLabelA.textContent = `Steps: 0`;
     if (stepsLabelB) stepsLabelB.textContent = `Steps: 0`;
   });
 
-  // Preset schemes selector
   presetSelect.addEventListener('change', () => {
-    const scheme = presetSelect.value;
-    shaderEditor.value = presets[scheme] || '';
+    shaderEditor.value = presets[presetSelect.value] || '';
     recompileShader();
   });
 
-  // Pluggable shader recompile button
   applyBtn.addEventListener('click', recompileShader);
-
-  // Keyboard modifiers
   window.addEventListener('keydown', (e) => {
     if (e.key.toLowerCase() === 'c') btnClear.click();
-    if (e.key.toLowerCase() === 'q') isQPressed = true;
-    if (e.key.toLowerCase() === 'g') isGPressed = true;
   });
-
-  window.addEventListener('keyup', (e) => {
-    if (e.key.toLowerCase() === 'q') isQPressed = false;
-    if (e.key.toLowerCase() === 'g') isGPressed = false;
-  });
-
   window.addEventListener('resize', resize);
 }
 
-// Application startup
 async function start() {
-  // Set default solver code in editor (MacCormack)
   shaderEditor.value = presets['mac-cormack'];
-  
-  // Initialize canvas resolutions as square
   const w = Math.floor(canvasA.parentElement!.clientWidth) || 800;
   const h = Math.floor(canvasA.parentElement!.clientHeight) || 600;
   const size = Math.min(w, h);
-  canvasA.width = size;
-  canvasA.height = size;
-  canvasB.width = size;
-  canvasB.height = size;
-  paintCanvas.width = size * 2;
-  paintCanvas.height = size * 2;
-
-  // Initialize contexts
+  canvasA.width = size; canvasA.height = size;
+  canvasB.width = size; canvasB.height = size;
+  paintCanvas.width = size * 2; paintCanvas.height = size * 2;
   await simA.init(canvasA);
   await simB.init(canvasB);
-  
-  // Set initial solver code in Canvas B and fail fast if it fails to compile
   const res = await simB.compileAdvectPipeline(presets['mac-cormack']);
   if (!res.success) {
-    console.error("Failed to compile initial MacCormack shader:", res.messages);
     compilerStatus.className = 'w-2 h-2 rounded-full bg-red-500';
     compilerLogs.textContent = `Compilation Error on Startup:\n${res.messages.join('\n')}`;
     throw new Error(`Failed to compile initial MacCormack shader:\n${res.messages.join('\n')}`);
   }
-
   resize();
   bindEvents();
   updatePlayPauseUI();
