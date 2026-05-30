@@ -17,8 +17,7 @@ export function useParticles() {
 
   let uvSampler: GPUSampler;
   let uniformBuf: GPUBuffer;
-  let computeBG: GPUBindGroup;
-  let renderBG: GPUBindGroup;
+  let particleBG: GPUBindGroup;
 
   function getShared(): SharedTextures | null {
     if (!sharedRef) return null;
@@ -56,27 +55,37 @@ export function useParticles() {
   }
 
   function createBindGroups() {
-    if (!core || !pipes || !buffers) return;
+    console.log("createBindGroups called in useParticles.ts");
+    if (!core || !pipes || !buffers) {
+      console.warn("createBindGroups early return: core, pipes, or buffers not ready", { core: !!core, pipes: !!pipes, buffers: !!buffers });
+      return;
+    }
     const { device } = core;
     const shared = getShared();
-    if (!shared || !shared.uv) return;
+    if (!shared) {
+      console.warn("createBindGroups early return: getShared() returned null");
+      return;
+    }
+    if (!shared.uv) {
+      console.warn("createBindGroups early return: shared.uv is missing");
+      return;
+    }
 
-    computeBG = device.createBindGroup({
-      layout: pipes.compute.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: buffers.particleBuffer } },
-        { binding: 1, resource: { buffer: uniformBuf } },
-        { binding: 2, resource: shared.uv.createView() },
-        { binding: 3, resource: uvSampler },
-      ]
-    });
-
-    renderBG = device.createBindGroup({
-      layout: pipes.render.getBindGroupLayout(0),
-      entries: [
-        { binding: 1, resource: { buffer: uniformBuf } }
-      ]
-    });
+    try {
+      console.log("Creating particleBG...");
+      particleBG = device.createBindGroup({
+        layout: pipes.bindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: buffers.particleBuffer } },
+          { binding: 1, resource: { buffer: uniformBuf } },
+          { binding: 2, resource: shared.uv.createView() },
+          { binding: 3, resource: uvSampler },
+        ]
+      });
+      console.log("particleBG created successfully:", !!particleBG);
+    } catch (err) {
+      console.error("Error creating particle bind group:", err);
+    }
   }
 
   // Exposed so it can be called if shared textures are resized/recreated
@@ -85,8 +94,16 @@ export function useParticles() {
   }
 
   function render(params: any, dt: number) {
-    if (!isInitialized.value || !context || !core) return;
+    if (!isInitialized.value || !context || !core) {
+      return;
+    }
     const { device } = core;
+
+    // Safety checks for bind groups to fail fast and log clear warnings
+    if (!particleBG) {
+      console.error("Skipping particle render: bind group is not ready!");
+      return;
+    }
 
     // Update uniforms
     const uniformData = new Float32Array([
@@ -100,7 +117,7 @@ export function useParticles() {
     // 1. Compute Pass: Advect particles
     const cp = commandEncoder.beginComputePass();
     cp.setPipeline(pipes.compute);
-    cp.setBindGroup(0, computeBG);
+    cp.setBindGroup(0, particleBG);
     const workgroupCount = Math.ceil(buffers.particleCount / 64);
     cp.dispatchWorkgroups(workgroupCount);
     cp.end();
@@ -115,7 +132,7 @@ export function useParticles() {
       }]
     });
     rp.setPipeline(pipes.render);
-    rp.setBindGroup(0, renderBG);
+    rp.setBindGroup(0, particleBG);
     rp.setVertexBuffer(0, buffers.particleBuffer);
     rp.draw(6, buffers.particleCount);
     rp.end();

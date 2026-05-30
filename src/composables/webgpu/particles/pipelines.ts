@@ -1,6 +1,7 @@
 export interface ParticlePipelines {
   compute: GPUComputePipeline;
   render: GPURenderPipeline;
+  bindGroupLayout: GPUBindGroupLayout;
 }
 
 export function createParticlePipelines(
@@ -30,8 +31,40 @@ export function createParticlePipelines(
     ],
   };
 
+  // Explicit bind group layout for particles
+  const bindGroupLayout = device.createBindGroupLayout({
+    label: 'Particle Bind Group Layout',
+    entries: [
+      {
+        binding: 0,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: 'storage' }
+      },
+      {
+        binding: 1,
+        visibility: GPUShaderStage.COMPUTE | GPUShaderStage.VERTEX,
+        buffer: { type: 'uniform' }
+      },
+      {
+        binding: 2,
+        visibility: GPUShaderStage.COMPUTE,
+        texture: { sampleType: 'float' }
+      },
+      {
+        binding: 3,
+        visibility: GPUShaderStage.COMPUTE,
+        sampler: { type: 'filtering' }
+      }
+    ]
+  });
+
+  const pipelineLayout = device.createPipelineLayout({
+    label: 'Particle Pipeline Layout',
+    bindGroupLayouts: [bindGroupLayout]
+  });
+
   const compute = device.createComputePipeline({
-    layout: 'auto',
+    layout: pipelineLayout,
     compute: {
       module: shaderModule,
       entryPoint: 'compute_main',
@@ -39,7 +72,7 @@ export function createParticlePipelines(
   });
 
   const render = device.createRenderPipeline({
-    layout: 'auto',
+    layout: pipelineLayout,
     vertex: {
       module: shaderModule,
       entryPoint: 'vertex_main',
@@ -71,5 +104,5 @@ export function createParticlePipelines(
     },
   });
 
-  return { compute, render };
+  return { compute, render, bindGroupLayout };
 }
