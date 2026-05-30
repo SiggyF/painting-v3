@@ -40,10 +40,7 @@ fn compute_main(@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>) {
   p.life -= uniforms.dt * 0.5; // Arbitrary life span decay
   
   // Sample UV video for velocity and mask
-  var uv = p.pos;
-  if (uniforms.flipv > 0.5) {
-    uv.y = 1.0 - uv.y;
-  }
+  let uv = p.pos;
   
   let vel_raw = textureSampleLevel(uvTex, uvSampler, uv, 0.0);
   let mask = vel_raw.z; // Blue channel of UV video texture contains the land mask
