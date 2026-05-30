@@ -105,13 +105,13 @@ export function createParticlePipelines(
           format,
           blend: {
             color: {
-              srcFactor: 'src-alpha',
-              dstFactor: 'one-minus-src-alpha',
+              srcFactor: 'one',
+              dstFactor: 'one',
               operation: 'add',
             },
             alpha: {
               srcFactor: 'one',
-              dstFactor: 'one-minus-src-alpha',
+              dstFactor: 'one',
               operation: 'add',
             },
           },

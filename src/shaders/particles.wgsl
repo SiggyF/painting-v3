@@ -38,39 +38,44 @@ fn compute_main(@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>) {
 
   // Particle life logic
   p.life -= uniforms.dt * 0.5; // Arbitrary life span decay
-  if (p.life <= 0.0) {
+  
+  // Sample UV video for velocity and mask
+  var uv = p.pos;
+  // Map simulation space (y=0 at bottom, 1=top) to texture space (y=0 at top, 1=bottom)
+  uv.y = 1.0 - uv.y;
+  if (uniforms.flipv > 0.5) {
+    uv.y = 1.0 - uv.y;
+  }
+  
+  let vel_raw = textureSampleLevel(uvTex, uvSampler, uv, 0.0);
+  let mask = vel_raw.z; // Blue channel of UV video texture contains the land mask
+
+  if (p.life <= 0.0 || mask > 0.01) {
     // Respawn particle randomly
     let r1 = hash12(vec2<f32>(f32(index), uniforms.time));
     let r2 = hash12(vec2<f32>(uniforms.time, f32(index)));
     p.pos = vec2<f32>(r1, r2);
     p.life = 1.0;
     p.vel = vec2<f32>(0.0, 0.0);
+  } else {
+    // Decode velocity from rg channel (assuming 0.5 is zero velocity)
+    // Scale it up based on the same logic in fluid.wgsl
+    var vel = (vel_raw.xy - vec2<f32>(0.5, 0.5)) * 2.0 * uniforms.uvScale * uniforms.speed;
+    if (uniforms.flipv > 0.5) {
+      vel.y = -vel.y;
+    }
+
+    p.vel = mix(p.vel, vel, 0.1); // Smooth velocity
+
+    // Advect particle
+    p.pos += p.vel * uniforms.dt * vec2<f32>(1.0 / uniforms.aspect, 1.0);
+
+    // Wrap around boundaries (or bounce)
+    if (p.pos.x < 0.0) { p.pos.x += 1.0; }
+    if (p.pos.x > 1.0) { p.pos.x -= 1.0; }
+    if (p.pos.y < 0.0) { p.pos.y += 1.0; }
+    if (p.pos.y > 1.0) { p.pos.y -= 1.0; }
   }
-
-  // Sample UV video for velocity
-  var uv = p.pos;
-  if (uniforms.flipv > 0.5) {
-    uv.y = 1.0 - uv.y;
-  }
-  
-  // Apply uv scale to match the background video logic if necessary
-  // Currently, we just sample directly from the UV texture using the particle's position [0,1]
-  let vel_raw = textureSampleLevel(uvTex, uvSampler, uv, 0.0);
-  
-  // Decode velocity from rg channel (assuming 0.5 is zero velocity)
-  // Scale it up based on the same logic in fluid.wgsl
-  let vel = (vel_raw.xy - vec2<f32>(0.5, 0.5)) * 2.0 * uniforms.uvScale * uniforms.speed;
-
-  p.vel = mix(p.vel, vel, 0.1); // Smooth velocity
-
-  // Advect particle
-  p.pos += p.vel * uniforms.dt * vec2<f32>(1.0 / uniforms.aspect, 1.0);
-
-  // Wrap around boundaries (or bounce)
-  if (p.pos.x < 0.0) { p.pos.x += 1.0; }
-  if (p.pos.x > 1.0) { p.pos.x -= 1.0; }
-  if (p.pos.y < 0.0) { p.pos.y += 1.0; }
-  if (p.pos.y > 1.0) { p.pos.y -= 1.0; }
 
   particles[index] = p;
 }
@@ -108,7 +113,7 @@ fn vertex_main(
   let size = vec2<f32>(baseSize / uniforms.aspect, baseSize);
 
   let ndc_x = pos.x * 2.0 - 1.0;
-  let ndc_y = 1.0 - pos.y * 2.0;
+  let ndc_y = pos.y * 2.0 - 1.0; // Map simulation space (y=0 bottom, 1 top) directly to NDC y (-1 bottom, 1 top)
   let final_pos = vec2<f32>(ndc_x, ndc_y) + offset * size;
 
   output.position = vec4<f32>(final_pos, 0.0, 1.0);
@@ -119,12 +124,13 @@ fn vertex_main(
 
 @fragment
 fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
-  // Speed-based color
+  // Speed-based color (soft premium cyan-blue to pink-magenta)
   let speed = length(in.vel);
-  let color = mix(vec3<f32>(0.2, 0.6, 1.0), vec3<f32>(1.0, 0.2, 0.2), clamp(speed * 20.0, 0.0, 1.0));
+  let color = mix(vec3<f32>(0.1, 0.5, 1.0), vec3<f32>(1.0, 0.25, 0.6), clamp(speed * 20.0, 0.0, 1.0));
   
-  // Fade out based on life
-  let alpha = smoothstep(0.0, 0.2, in.life) * smoothstep(1.0, 0.8, in.life) * 0.8;
+  // Fade out based on life (transparent with soft alpha)
+  let alpha = smoothstep(0.0, 0.15, in.life) * smoothstep(1.0, 0.85, in.life) * 0.25;
 
-  return vec4<f32>(color, alpha);
+  // Return premultiplied color for additive blending
+  return vec4<f32>(color * alpha, alpha);
 }
