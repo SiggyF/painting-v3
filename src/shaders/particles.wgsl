@@ -41,8 +41,6 @@ fn compute_main(@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>) {
   
   // Sample UV video for velocity and mask
   var uv = p.pos;
-  // Map simulation space (y=0 at bottom, 1=top) to texture space (y=0 at top, 1=bottom)
-  uv.y = 1.0 - uv.y;
   if (uniforms.flipv > 0.5) {
     uv.y = 1.0 - uv.y;
   }
@@ -113,7 +111,7 @@ fn vertex_main(
   let size = vec2<f32>(baseSize / uniforms.aspect, baseSize);
 
   let ndc_x = pos.x * 2.0 - 1.0;
-  let ndc_y = pos.y * 2.0 - 1.0; // Map simulation space (y=0 bottom, 1 top) directly to NDC y (-1 bottom, 1 top)
+  let ndc_y = 1.0 - pos.y * 2.0; // Map simulation space (y=0 top, 1 bottom) to NDC y (1 top, -1 bottom)
   let final_pos = vec2<f32>(ndc_x, ndc_y) + offset * size;
 
   output.position = vec4<f32>(final_pos, 0.0, 1.0);
