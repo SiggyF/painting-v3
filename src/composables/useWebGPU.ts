@@ -1,3 +1,8 @@
-import { useWebGPU } from './webgpu/index';
-export { useWebGPU };
+import { initWebGPU, type GPUCore } from './webgpu/core';
+import { useSharedResources, type SharedTextures } from './webgpu/shared';
+import { useWebGPU as useFlow } from './webgpu/flow/useFlow';
+import { useParticles } from './webgpu/particles/useParticles';
+
+export { initWebGPU, useSharedResources, useFlow, useParticles, useFlow as useWebGPU };
+export type { GPUCore, SharedTextures };
 export type { GPUParams } from './webgpu/types';

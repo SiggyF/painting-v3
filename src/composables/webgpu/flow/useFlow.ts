@@ -1,10 +1,11 @@
-import { ref } from 'vue';
-import type { GPUParams } from './types';
-import { initWebGPU, type GPUCore } from './core';
+import { ref, type Ref } from 'vue';
+import type { GPUParams } from '../types';
+import { initWebGPU, type GPUCore } from '../core';
+import { useSharedResources, type SharedTextures } from '../shared';
 import { createSimulationTextures, clearAllTextures, type GPUTextures } from './textures';
 import { createSimulationPipelines, type GPUPipelines } from './pipelines';
 import { buildAdvectShader } from './schemes';
-import fluidShaderSource from '../../shaders/fluid.wgsl?raw';
+import fluidShaderSource from '../../../shaders/fluid.wgsl?raw';
 
 export type { GPUParams };
 
@@ -13,7 +14,10 @@ export function useWebGPU() {
   const error = ref<string | null>(null);
 
   let core: GPUCore;
+  let context: GPUCanvasContext | undefined;
   let textures: GPUTextures;
+  let sharedRef: Ref<SharedTextures | null> | SharedTextures | null = null;
+  let localSharedResources: ReturnType<typeof useSharedResources> | null = null;
   let pipes: GPUPipelines;
 
   let sampler: GPUSampler;
@@ -29,6 +33,7 @@ export function useWebGPU() {
   let statsBGs: GPUBindGroup[] = [];
 
   let stateIdx = 0;
+  let isMapping = false;
   const activeColor = ref([1.0, 0.1, 0.4]);
 
   function updateActiveColor(hex: string) {
@@ -38,15 +43,39 @@ export function useWebGPU() {
     activeColor.value = [r, g, b];
   }
 
-  async function init(canvas?: HTMLCanvasElement, options?: { width?: number; height?: number }) {
+  function getShared(): SharedTextures | null {
+    if (!sharedRef) return null;
+    return ('value' in sharedRef) ? sharedRef.value : sharedRef;
+  }
+
+  async function init(
+    coreOrCanvas: GPUCore | HTMLCanvasElement,
+    sharedTextures?: Ref<SharedTextures | null> | SharedTextures | null,
+    canvasContext?: GPUCanvasContext
+  ) {
     try {
-      core = await initWebGPU(canvas, options);
+      if (coreOrCanvas instanceof HTMLCanvasElement) {
+        const canvas = coreOrCanvas;
+        core = await initWebGPU(canvas.width || 512, canvas.height || 512);
+        const ctx = canvas.getContext('webgpu');
+        if (!ctx) throw new Error("WebGPU canvas context failed");
+        ctx.configure({ device: core.device, format: core.format, alphaMode: 'premultiplied' });
+        context = ctx;
+
+        localSharedResources = useSharedResources(core);
+        sharedRef = localSharedResources.textures;
+      } else {
+        core = coreOrCanvas;
+        sharedRef = sharedTextures || null;
+        context = canvasContext;
+      }
+
       const { device, format } = core;
 
       sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
       uvSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 
-      textures = createSimulationTextures(device, core.simW, core.simH);
+      textures = createSimulationTextures(device, core.simW || 512, core.simH || 512);
       
       uniformBuf = device.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
       statsBuf = device.createBuffer({ size: 64, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
@@ -64,7 +93,11 @@ export function useWebGPU() {
   }
 
   function createBindGroups() {
+    if (!core || !pipes) return;
     const { device } = core;
+    const shared = getShared();
+    if (!shared || !shared.paint || !shared.uv) return;
+
     advectBGs = []; advectBGs2 = []; renderBGs = []; statsBGs = []; sourceBGs = [];
 
     [0, 1].forEach(i => {
@@ -74,7 +107,7 @@ export function useWebGPU() {
         layout: pipes.source.getBindGroupLayout(0),
         entries: [
           { binding: 3, resource: uvSampler },
-          { binding: 6, resource: textures.paint.createView() }
+          { binding: 6, resource: shared.paint.createView() }
         ]
       }));
 
@@ -85,7 +118,7 @@ export function useWebGPU() {
           { binding: 1, resource: textures.state[read].createView() },
           { binding: 2, resource: { buffer: uniformBuf } },
           { binding: 3, resource: uvSampler },
-          { binding: 4, resource: textures.uv.createView() },
+          { binding: 4, resource: shared.uv.createView() },
           { binding: 5, resource: textures.source.createView() } 
         ]
       }));
@@ -98,7 +131,7 @@ export function useWebGPU() {
             { binding: 1, resource: textures.temp.createView() },
             { binding: 2, resource: { buffer: uniformBuf } },
             { binding: 3, resource: uvSampler },
-            { binding: 4, resource: textures.uv.createView() },
+            { binding: 4, resource: shared.uv.createView() },
             { binding: 5, resource: textures.source.createView() },
             { binding: 7, resource: textures.state[read].createView() }
           ]
@@ -112,7 +145,7 @@ export function useWebGPU() {
           { binding: 1, resource: textures.state[write].createView() },
           { binding: 2, resource: { buffer: uniformBuf } },
           { binding: 3, resource: uvSampler },
-          { binding: 4, resource: textures.uv.createView() }
+          { binding: 4, resource: shared.uv.createView() }
         ]
       }));
 
@@ -154,46 +187,11 @@ export function useWebGPU() {
     return { success, messages };
   }
 
-  function updateUVTexture(source: any, flipY: boolean = false) {
-    if (!core || !isInitialized.value) return;
-    const { device } = core;
-    
-    if (typeof HTMLVideoElement !== 'undefined' && source instanceof HTMLVideoElement && source.readyState < 2) return;
 
-    let width = source.videoWidth || source.naturalWidth || source.width;
-    let height = source.videoHeight || source.naturalHeight || source.height;
-    if (width <= 0 || height <= 0) return;
-
-    if (textures.uv.width !== width || textures.uv.height !== height) {
-      textures.uv = device.createTexture({
-        size: [width, height], format: 'rgba8unorm',
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
-      });
-      createBindGroups();
-    }
-    device.queue.copyExternalImageToTexture({ source, flipY }, { texture: textures.uv }, [width, height]);
-  }
-
-  function updatePaintTexture(source: any) {
-    if (!core || !isInitialized.value) return;
-    const { device } = core;
-    const width = source.width;
-    const height = source.height;
-    if (width <= 0 || height <= 0) return;
-
-    if (textures.paint.width !== width || textures.paint.height !== height) {
-      textures.paint = device.createTexture({
-        size: [width, height], format: 'rgba8unorm',
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
-      });
-      createBindGroups();
-    }
-    device.queue.copyExternalImageToTexture({ source, flipY: false }, { texture: textures.paint }, [width, height]);
-  }
 
   function render(params: GPUParams) {
     if (!isInitialized.value) return;
-    const { device, context } = core;
+    const { device } = core;
 
     const uniformData = new Float32Array([
       params.speed, params.blend, params.time, params.aspect,
@@ -255,13 +253,15 @@ export function useWebGPU() {
     }
 
     // 3. Stats
-    commandEncoder.clearBuffer(statsBuf);
-    const cp = commandEncoder.beginComputePass();
-    cp.setPipeline(pipes.stats);
-    cp.setBindGroup(0, statsBGs[(stateIdx + 1) % 2]);
-    cp.dispatchWorkgroups(Math.ceil(core.simW / 16), Math.ceil(core.simH / 16));
-    cp.end();
-    commandEncoder.copyBufferToBuffer(statsBuf, 0, readBuf, 0, 64);
+    if (!isMapping) {
+      commandEncoder.clearBuffer(statsBuf);
+      const cp = commandEncoder.beginComputePass();
+      cp.setPipeline(pipes.stats);
+      cp.setBindGroup(0, statsBGs[(stateIdx + 1) % 2]);
+      cp.dispatchWorkgroups(Math.ceil(core.simW / 16), Math.ceil(core.simH / 16));
+      cp.end();
+      commandEncoder.copyBufferToBuffer(statsBuf, 0, readBuf, 0, 64);
+    }
 
     // 4. Final Render
     if (context) {
@@ -305,11 +305,19 @@ export function useWebGPU() {
   }
 
   async function getStats() {
-    if (!isInitialized.value) return null;
-    await readBuf.mapAsync(GPUMapMode.READ);
-    const data = new Uint32Array(readBuf.getMappedRange().slice(0));
-    readBuf.unmap();
-    return data;
+    if (!isInitialized.value || isMapping) return null;
+    isMapping = true;
+    try {
+      await readBuf.mapAsync(GPUMapMode.READ);
+      const data = new Uint32Array(readBuf.getMappedRange().slice(0));
+      readBuf.unmap();
+      return data;
+    } catch (e) {
+      console.warn("getStats mapping error:", e);
+      return null;
+    } finally {
+      isMapping = false;
+    }
   }
 
   function resize(width: number, height: number) {
@@ -346,7 +354,19 @@ export function useWebGPU() {
 
   return {
     init, render, resize,
-    updateUVTexture, updatePaintTexture,
+    createBindGroups,
+    updateUVTexture: (source: any, flipY = false) => {
+      if (localSharedResources) {
+        localSharedResources.updateUVTexture(source, flipY);
+        createBindGroups();
+      }
+    },
+    updatePaintTexture: (source: HTMLCanvasElement) => {
+      if (localSharedResources) {
+        localSharedResources.updatePaintTexture(source);
+        createBindGroups();
+      }
+    },
     clearTextures: () => clearAllTextures(core.device, textures),
     clearSource: () => {
       const enc = core.device.createCommandEncoder();

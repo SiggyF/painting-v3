@@ -1,8 +1,6 @@
 export interface GPUTextures {
   state: GPUTexture[]; // Ping-pong buffers [0, 1]
   source: GPUTexture; // Persistent accumulation buffer
-  paint: GPUTexture;  // Raw 2D canvas texture
-  uv: GPUTexture;     // Velocity/Mask texture
   temp: GPUTexture;    // Intermediate multi-pass buffer
 }
 
@@ -19,25 +17,13 @@ export function createSimulationTextures(device: GPUDevice, width: number, heigh
     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST
   });
 
-  const paint = device.createTexture({
-    size: [1, 1], // Initial size, will be updated
-    format: 'rgba8unorm',
-    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
-  });
-
-  const uv = device.createTexture({
-    size: [1, 1],
-    format: 'rgba8unorm',
-    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
-  });
-
   const temp = device.createTexture({
     size: [width, height],
     format: 'rgba16float',
     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
   });
 
-  return { state, source, paint, uv, temp };
+  return { state, source, temp };
 }
 
 export function clearAllTextures(device: GPUDevice, textures: GPUTextures) {
@@ -55,17 +41,6 @@ export function clearAllTextures(device: GPUDevice, textures: GPUTextures) {
     });
     pass.end();
   });
-
-  // Clear UV to neutral velocity (0.5, 0.5)
-  const uvPass = encoder.beginRenderPass({
-    colorAttachments: [{
-      view: textures.uv.createView(),
-      loadOp: 'clear',
-      clearValue: { r: 0.5, g: 0.5, b: 0, a: 0 },
-      storeOp: 'store'
-    }]
-  });
-  uvPass.end();
 
   device.queue.submit([encoder.finish()]);
 }
