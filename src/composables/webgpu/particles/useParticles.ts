@@ -18,6 +18,7 @@ export function useParticles() {
   let uvSampler: GPUSampler;
   let uniformBuf: GPUBuffer;
   let particleBG: GPUBindGroup;
+  let hasLoggedCreate = false;
 
   function getShared(): SharedTextures | null {
     if (!sharedRef) return null;
@@ -55,24 +56,34 @@ export function useParticles() {
   }
 
   function createBindGroups() {
-    console.log("createBindGroups called in useParticles.ts");
+    if (!hasLoggedCreate) {
+      console.log("createBindGroups called in useParticles.ts (first execution)");
+    }
     if (!core || !pipes || !buffers) {
-      console.warn("createBindGroups early return: core, pipes, or buffers not ready", { core: !!core, pipes: !!pipes, buffers: !!buffers });
+      if (!hasLoggedCreate) {
+        console.warn("createBindGroups early return: core, pipes, or buffers not ready", { core: !!core, pipes: !!pipes, buffers: !!buffers });
+      }
       return;
     }
     const { device } = core;
     const shared = getShared();
     if (!shared) {
-      console.warn("createBindGroups early return: getShared() returned null");
+      if (!hasLoggedCreate) {
+        console.warn("createBindGroups early return: getShared() returned null");
+      }
       return;
     }
     if (!shared.uv) {
-      console.warn("createBindGroups early return: shared.uv is missing");
+      if (!hasLoggedCreate) {
+        console.warn("createBindGroups early return: shared.uv is missing");
+      }
       return;
     }
 
     try {
-      console.log("Creating particleBG...");
+      if (!hasLoggedCreate) {
+        console.log("Creating particleBG...");
+      }
       particleBG = device.createBindGroup({
         layout: pipes.bindGroupLayout,
         entries: [
@@ -82,7 +93,10 @@ export function useParticles() {
           { binding: 3, resource: uvSampler },
         ]
       });
-      console.log("particleBG created successfully:", !!particleBG);
+      if (!hasLoggedCreate) {
+        console.log("particleBG created successfully:", !!particleBG);
+        hasLoggedCreate = true;
+      }
     } catch (err) {
       console.error("Error creating particle bind group:", err);
     }
