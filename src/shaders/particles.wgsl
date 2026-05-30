@@ -117,6 +117,12 @@ fn vertex_main(
   return output;
 }
 
+fn hsv2rgb(c: vec3<f32>) -> vec3<f32> {
+  let k = vec4<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+  let p = abs(fract(c.xxx + k.xyz) * 6.0 - k.www);
+  return c.z * mix(k.xxx, clamp(p - k.xxx, vec3<f32>(0.0), vec3<f32>(1.0)), c.y);
+}
+
 @fragment
 fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
   // Distance from center of the billboard quad
@@ -128,9 +134,17 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
   // Soft radial falloff for glowing circular particles
   let intensity = smoothstep(1.0, 0.0, r);
 
-  // Speed-based color (soft premium cyan-blue to pink-magenta)
+  // Flow direction dependent color (using HSV color wheel)
   let speed = length(in.vel);
-  let color = mix(vec3<f32>(0.1, 0.5, 1.0), vec3<f32>(1.0, 0.25, 0.6), clamp(speed * 20.0, 0.0, 1.0));
+  let angle = atan2(in.vel.y, in.vel.x);
+  let hue = (angle + 3.14159265359) / (2.0 * 3.14159265359);
+  
+  // HSV parameters: Hue from direction, Saturation 0.85, Value 1.0
+  let wheelColor = hsv2rgb(vec3<f32>(hue, 0.85, 1.0));
+  
+  // Blend stationary/slow particles to a neutral white-grey so we focus on active streams
+  let speed_factor = clamp(speed * 30.0, 0.0, 1.0);
+  let color = mix(vec3<f32>(0.7, 0.7, 0.7), wheelColor, speed_factor);
   
   // Fade out based on life (transparent with soft alpha and radial intensity)
   let alpha = smoothstep(0.0, 0.15, in.life) * smoothstep(1.0, 0.85, in.life) * 0.25 * intensity;
