@@ -305,8 +305,7 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
   
   // Fade out based on life (transparent with soft alpha and radial intensity)
-  let alpha = smoothstep(0.0, 0.15, in.life) * smoothstep(1.0, 0.85, in.life) * uniforms.particleOpacity * intensity;
-
+  let alpha = smoothstep(0.0, 0.15, in.life) * (1.0 - smoothstep(0.85, 1.0, in.life)) * uniforms.particleOpacity * intensity;
   // Return premultiplied color for additive blending
   return vec4<f32>(color * alpha, alpha);
 }
