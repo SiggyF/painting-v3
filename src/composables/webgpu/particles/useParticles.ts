@@ -18,6 +18,7 @@ export function useParticles() {
   let uvSampler: GPUSampler;
   let uniformBuf: GPUBuffer;
   let computeBG: GPUBindGroup;
+  let renderBG: GPUBindGroup;
 
   function getShared(): SharedTextures | null {
     if (!sharedRef) return null;
@@ -69,6 +70,13 @@ export function useParticles() {
         { binding: 3, resource: uvSampler },
       ]
     });
+
+    renderBG = device.createBindGroup({
+      layout: pipes.render.getBindGroupLayout(0),
+      entries: [
+        { binding: 1, resource: { buffer: uniformBuf } }
+      ]
+    });
   }
 
   // Exposed so it can be called if shared textures are resized/recreated
@@ -107,6 +115,7 @@ export function useParticles() {
       }]
     });
     rp.setPipeline(pipes.render);
+    rp.setBindGroup(0, renderBG);
     rp.setVertexBuffer(0, buffers.particleBuffer);
     rp.draw(6, buffers.particleCount);
     rp.end();
