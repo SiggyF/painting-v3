@@ -78,6 +78,7 @@ struct VertexOutput {
   @builtin(position) position: vec4<f32>,
   @location(0) vel: vec2<f32>,
   @location(1) life: f32,
+  @location(2) uv: vec2<f32>,
 };
 
 @vertex
@@ -112,17 +113,27 @@ fn vertex_main(
   output.position = vec4<f32>(final_pos, 0.0, 1.0);
   output.vel = vel;
   output.life = life;
+  output.uv = offset;
   return output;
 }
 
 @fragment
 fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
+  // Distance from center of the billboard quad
+  let r = length(in.uv);
+  if (r > 1.0) {
+    discard; // Cut off corners to form a perfect circle
+  }
+
+  // Soft radial falloff for glowing circular particles
+  let intensity = smoothstep(1.0, 0.0, r);
+
   // Speed-based color (soft premium cyan-blue to pink-magenta)
   let speed = length(in.vel);
   let color = mix(vec3<f32>(0.1, 0.5, 1.0), vec3<f32>(1.0, 0.25, 0.6), clamp(speed * 20.0, 0.0, 1.0));
   
-  // Fade out based on life (transparent with soft alpha)
-  let alpha = smoothstep(0.0, 0.15, in.life) * smoothstep(1.0, 0.85, in.life) * 0.25;
+  // Fade out based on life (transparent with soft alpha and radial intensity)
+  let alpha = smoothstep(0.0, 0.15, in.life) * smoothstep(1.0, 0.85, in.life) * 0.25 * intensity;
 
   // Return premultiplied color for additive blending
   return vec4<f32>(color * alpha, alpha);
