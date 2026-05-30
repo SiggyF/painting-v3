@@ -1,7 +1,8 @@
 export interface ParticlePipelines {
   compute: GPUComputePipeline;
   render: GPURenderPipeline;
-  bindGroupLayout: GPUBindGroupLayout;
+  computeBindGroupLayout: GPUBindGroupLayout;
+  renderBindGroupLayout: GPUBindGroupLayout;
 }
 
 export function createParticlePipelines(
@@ -31,9 +32,9 @@ export function createParticlePipelines(
     ],
   };
 
-  // Explicit bind group layout for particles
-  const bindGroupLayout = device.createBindGroupLayout({
-    label: 'Particle Bind Group Layout',
+  // Explicit bind group layout for compute stage (all bindings visible to compute)
+  const computeBindGroupLayout = device.createBindGroupLayout({
+    label: 'Particle Compute Bind Group Layout',
     entries: [
       {
         binding: 0,
@@ -42,7 +43,7 @@ export function createParticlePipelines(
       },
       {
         binding: 1,
-        visibility: GPUShaderStage.COMPUTE | GPUShaderStage.VERTEX,
+        visibility: GPUShaderStage.COMPUTE,
         buffer: { type: 'uniform' }
       },
       {
@@ -58,13 +59,31 @@ export function createParticlePipelines(
     ]
   });
 
-  const pipelineLayout = device.createPipelineLayout({
-    label: 'Particle Pipeline Layout',
-    bindGroupLayouts: [bindGroupLayout]
+  // Explicit bind group layout for render stage (only uniforms visible to vertex)
+  // This prevents binding the storage/particle buffer in the render pass, avoiding usage collision with the vertex buffer.
+  const renderBindGroupLayout = device.createBindGroupLayout({
+    label: 'Particle Render Bind Group Layout',
+    entries: [
+      {
+        binding: 1,
+        visibility: GPUShaderStage.VERTEX,
+        buffer: { type: 'uniform' }
+      }
+    ]
+  });
+
+  const computePipelineLayout = device.createPipelineLayout({
+    label: 'Particle Compute Pipeline Layout',
+    bindGroupLayouts: [computeBindGroupLayout]
+  });
+
+  const renderPipelineLayout = device.createPipelineLayout({
+    label: 'Particle Render Pipeline Layout',
+    bindGroupLayouts: [renderBindGroupLayout]
   });
 
   const compute = device.createComputePipeline({
-    layout: pipelineLayout,
+    layout: computePipelineLayout,
     compute: {
       module: shaderModule,
       entryPoint: 'compute_main',
@@ -72,7 +91,7 @@ export function createParticlePipelines(
   });
 
   const render = device.createRenderPipeline({
-    layout: pipelineLayout,
+    layout: renderPipelineLayout,
     vertex: {
       module: shaderModule,
       entryPoint: 'vertex_main',
@@ -104,5 +123,5 @@ export function createParticlePipelines(
     },
   });
 
-  return { compute, render, bindGroupLayout };
+  return { compute, render, computeBindGroupLayout, renderBindGroupLayout };
 }

@@ -17,7 +17,8 @@ export function useParticles() {
 
   let uvSampler: GPUSampler;
   let uniformBuf: GPUBuffer;
-  let particleBG: GPUBindGroup;
+  let computeBG: GPUBindGroup;
+  let renderBG: GPUBindGroup;
   let hasLoggedCreate = false;
 
   function getShared(): SharedTextures | null {
@@ -82,10 +83,10 @@ export function useParticles() {
 
     try {
       if (!hasLoggedCreate) {
-        console.log("Creating particleBG...");
+        console.log("Creating computeBG...");
       }
-      particleBG = device.createBindGroup({
-        layout: pipes.bindGroupLayout,
+      computeBG = device.createBindGroup({
+        layout: pipes.computeBindGroupLayout,
         entries: [
           { binding: 0, resource: { buffer: buffers.particleBuffer } },
           { binding: 1, resource: { buffer: uniformBuf } },
@@ -94,7 +95,20 @@ export function useParticles() {
         ]
       });
       if (!hasLoggedCreate) {
-        console.log("particleBG created successfully:", !!particleBG);
+        console.log("computeBG created successfully:", !!computeBG);
+      }
+
+      if (!hasLoggedCreate) {
+        console.log("Creating renderBG...");
+      }
+      renderBG = device.createBindGroup({
+        layout: pipes.renderBindGroupLayout,
+        entries: [
+          { binding: 1, resource: { buffer: uniformBuf } }
+        ]
+      });
+      if (!hasLoggedCreate) {
+        console.log("renderBG created successfully:", !!renderBG);
         hasLoggedCreate = true;
       }
     } catch (err) {
@@ -114,8 +128,8 @@ export function useParticles() {
     const { device } = core;
 
     // Safety checks for bind groups to fail fast and log clear warnings
-    if (!particleBG) {
-      console.error("Skipping particle render: bind group is not ready!");
+    if (!computeBG || !renderBG) {
+      console.error("Skipping particle render: bind groups are not ready!", { computeBG: !!computeBG, renderBG: !!renderBG });
       return;
     }
 
@@ -131,7 +145,7 @@ export function useParticles() {
     // 1. Compute Pass: Advect particles
     const cp = commandEncoder.beginComputePass();
     cp.setPipeline(pipes.compute);
-    cp.setBindGroup(0, particleBG);
+    cp.setBindGroup(0, computeBG);
     const workgroupCount = Math.ceil(buffers.particleCount / 64);
     cp.dispatchWorkgroups(workgroupCount);
     cp.end();
@@ -146,7 +160,7 @@ export function useParticles() {
       }]
     });
     rp.setPipeline(pipes.render);
-    rp.setBindGroup(0, particleBG);
+    rp.setBindGroup(0, renderBG);
     rp.setVertexBuffer(0, buffers.particleBuffer);
     rp.draw(6, buffers.particleCount);
     rp.end();
