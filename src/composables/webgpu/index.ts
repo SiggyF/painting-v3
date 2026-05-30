@@ -221,7 +221,7 @@ export function useWebGPU() {
     sp.end();
 
     // 2. Advection (Explicit Finite Volume or Semi-Lagrangian)
-    const advectSteps = (params.scheme >= 4.0 && params.scheme <= 6.0) ? 4 : 1;
+    const advectSteps = (params.scheme >= 4.0 && params.scheme <= 8.0) ? 4 : 1;
     for (let s = 0; s < advectSteps; s++) {
         const nextStateIdx = (stateIdx + 1) % 2;
         const ap = commandEncoder.beginRenderPass({

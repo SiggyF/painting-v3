@@ -10,6 +10,7 @@ import fctCorrector from '../../shaders/fct_corrector.wgsl?raw';
 import bicubicSource from '../../shaders/bicubic.wgsl?raw';
 import bilinearSource from '../../shaders/bilinear.wgsl?raw';
 import roeSource from '../../shaders/roe.wgsl?raw';
+import musclSource from '../../shaders/muscl_fvm_predictor.wgsl?raw';
 
 export interface SchemeInfo {
   id: string;
@@ -27,7 +28,8 @@ export const predictorShaders: Record<string, string> = {
   'rk4': rk4MaccormackPredictor,
   'upwind': upwindPredictor,
   'bicubic': bicubicSource,
-  'roe': roeSource
+  'roe': roeSource,
+  'muscl': musclSource
 };
 
 export const correctorShaders: Record<string, string> = {
@@ -53,7 +55,8 @@ export const presets: Record<string, string> = {
   'upwind-none': upwindPredictor + '\n\n' + correctorShaders.none,
   'upwind-fct': upwindPredictor + '\n\n' + fctCorrector,
   'bicubic-none': bicubicSource + '\n\n' + correctorShaders.none,
-  'roe-none': roeSource + '\n\n' + correctorShaders.none
+  'roe-none': roeSource + '\n\n' + correctorShaders.none,
+  'muscl-none': musclSource + '\n\n' + correctorShaders.none
 };
 
 export async function buildAdvectShader(

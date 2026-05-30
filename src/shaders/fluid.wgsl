@@ -191,7 +191,7 @@ fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     let vel = getSimulationVelocity(uv);
 
     // Backwards Advection
-    let dt = select(0.005, 0.00125, params.scheme >= 4.0 && params.scheme <= 6.0);
+    let dt = select(0.005, 0.00125, params.scheme >= 4.0 && params.scheme <= 8.0);
     let prevUV = uv - vel * dt * vec2<f32>(1.0 / params.aspectRatio, 1.0);
     let prevState = sampleAdvection(uv, prevUV, vel);
     
@@ -204,7 +204,7 @@ fn advect_main2(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 
     // Backwards Advection
     let aspect = vec2<f32>(1.0 / params.aspectRatio, 1.0);
-    let dt = select(0.005, 0.00125, params.scheme >= 4.0 && params.scheme <= 6.0);
+    let dt = select(0.005, 0.00125, params.scheme >= 4.0 && params.scheme <= 8.0);
     let prevUV = uv - vel * dt * aspect;
     
     let fp = textureSample(prevStateTex, samp, uv);
