@@ -462,10 +462,12 @@ const handleModelSelect = (model: any) => {
     }
   }
 
-  if (gpuLayer && model.extent?.sw && model.extent?.ne) {
+  if (gpuLayer && particleLayer && model.extent?.sw && model.extent?.ne) {
     const sw = L.latLng(model.extent.sw[0], model.extent.sw[1])
     const ne = L.latLng(model.extent.ne[0], model.extent.ne[1])
-    gpuLayer.setBounds(L.latLngBounds(sw, ne))
+    const bounds = L.latLngBounds(sw, ne)
+    gpuLayer.setBounds(bounds)
+    particleLayer.setBounds(bounds)
   }
 
   const tag = model.uv?.tag || 'video'
@@ -598,6 +600,14 @@ onMounted(() => {
         // Initialize modules with shared textures
         await flow.init(core, sharedResources.textures, context)
         await particles.init(core, sharedResources.textures, pContext, 65536)
+
+        // Expose references to window for console debugging
+        ;(window as any).gpuCore = core
+        ;(window as any).gpuLayer = gpuLayer
+        ;(window as any).particleLayer = particleLayer
+        ;(window as any).flow = flow
+        ;(window as any).particles = particles
+        ;(window as any).gpuParams = gpuParams
 
         gpuParams.aspect = canvas.width / canvas.height
         // Explicitly set initial state: Map navigation active
