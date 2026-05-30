@@ -3,7 +3,7 @@ import { ref, onMounted, reactive, onUnmounted, computed } from 'vue'
 import L from 'leaflet'
 import { WebGPULayer } from './utils/WebGPULayer'
 import { initWebGPU, useSharedResources, useFlow, useParticles } from './composables/useWebGPU'
-import type { GPUCore, SharedTextures } from './composables/useWebGPU'
+import type { GPUCore } from './composables/useWebGPU'
 import type { GPUParams } from './composables/webgpu/types'
 import { buildCustomAdvectCode } from './composables/webgpu/flow/schemes'
 
@@ -596,8 +596,8 @@ onMounted(() => {
         pContext.configure({ device: core.device, format: core.format, alphaMode: 'premultiplied' })
 
         // Initialize modules with shared textures
-        await flow.init(core, sharedResources.textures.value as SharedTextures, context)
-        await particles.init(core, sharedResources.textures.value as SharedTextures, pContext, 65536)
+        await flow.init(core, sharedResources.textures, context)
+        await particles.init(core, sharedResources.textures, pContext, 65536)
 
         gpuParams.aspect = canvas.width / canvas.height
         // Explicitly set initial state: Map navigation active
