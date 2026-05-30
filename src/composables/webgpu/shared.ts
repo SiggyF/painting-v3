@@ -7,7 +7,25 @@ export interface SharedTextures {
 }
 
 export function useSharedResources(core: GPUCore) {
-  const textures = ref<SharedTextures | null>(null);
+  const { device } = core;
+
+  // Create initial dummy 1x1 textures to avoid null references
+  const dummyUV = device.createTexture({
+    size: [1, 1],
+    format: 'rgba8unorm',
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+  });
+
+  const dummyPaint = device.createTexture({
+    size: [1, 1],
+    format: 'rgba8unorm',
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+  });
+
+  const textures = ref<SharedTextures | null>({
+    uv: dummyUV,
+    paint: dummyPaint
+  });
 
   function updateUVTexture(source: any, flipY: boolean = false) {
     if (!core) return;

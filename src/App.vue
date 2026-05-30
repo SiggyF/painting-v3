@@ -588,8 +588,6 @@ onMounted(() => {
         core = c
         sharedResources = useSharedResources(core)
 
-        // Force an initial texture creation before passing to modules
-        sharedResources.updateUVTexture(document.createElement('canvas'))
 
         const context = canvas.getContext('webgpu') as GPUCanvasContext
         context.configure({ device: core.device, format: core.format, alphaMode: 'premultiplied' })
