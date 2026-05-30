@@ -762,7 +762,7 @@ function startLoop() {
     particles.rebind()
     
     flow.render(gpuParams)
-    particles.render(gpuParams, 0.01)
+    particles.render(gpuParams, 0.005)
 
     // Update stats overlay periodically
     if (Math.floor(gpuParams.time * 100) % 10 === 0) {

@@ -53,9 +53,7 @@ fn compute_main(@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>) {
     p.life = 1.0;
     p.vel = vec2<f32>(0.0, 0.0);
   } else {
-    // Decode velocity from rg channel (assuming 0.5 is zero velocity)
-    // Scale it up based on the same logic in fluid.wgsl
-    var vel = (vel_raw.xy - vec2<f32>(0.5, 0.5)) * 2.0 * uniforms.uvScale * uniforms.speed;
+    var vel = (vel_raw.xy - vec2<f32>(0.5, 0.5)) * uniforms.uvScale * uniforms.speed;
     if (uniforms.flipv > 0.5) {
       vel.y = -vel.y;
     }
