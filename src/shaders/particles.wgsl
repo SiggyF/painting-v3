@@ -2,7 +2,9 @@ struct Particle {
   pos: vec2<f32>,
   vel: vec2<f32>,
   life: f32,
-  padding: vec3<f32>,
+  p1: f32,
+  p2: f32,
+  p3: f32,
 };
 
 struct Uniforms {
@@ -82,20 +84,34 @@ struct VertexOutput {
 
 @vertex
 fn vertex_main(
+  @builtin(vertex_index) vertexIndex: u32,
   @location(0) pos: vec2<f32>,
   @location(1) vel: vec2<f32>,
   @location(2) life: f32
 ) -> VertexOutput {
   var output: VertexOutput;
-  // Convert [0, 1] to NDC [-1, 1]
-  // Y axis in WebGPU NDC is up, but pos.y=0 might be top depending on canvas setup
-  // Let's assume standard WebGPU: y=1 is top
-  // In typical UV mapping: y=0 is top.
-  // We'll flip Y to match WebGPU NDC
+  
+  // A quad billboard made of two triangles
+  var quadOffsets = array<vec2<f32>, 6>(
+    vec2<f32>(-1.0, -1.0),
+    vec2<f32>( 1.0, -1.0),
+    vec2<f32>(-1.0,  1.0),
+    vec2<f32>(-1.0,  1.0),
+    vec2<f32>( 1.0, -1.0),
+    vec2<f32>( 1.0,  1.0)
+  );
+
+  let offset = quadOffsets[vertexIndex];
+  
+  // Particle size in NDC, corrected for aspect ratio (e.g. 3px size equivalent)
+  let baseSize = 0.003;
+  let size = vec2<f32>(baseSize / uniforms.aspect, baseSize);
+
   let ndc_x = pos.x * 2.0 - 1.0;
   let ndc_y = 1.0 - pos.y * 2.0;
+  let final_pos = vec2<f32>(ndc_x, ndc_y) + offset * size;
 
-  output.position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
+  output.position = vec4<f32>(final_pos, 0.0, 1.0);
   output.vel = vel;
   output.life = life;
   return output;

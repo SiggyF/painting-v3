@@ -108,7 +108,7 @@ export function useParticles() {
     });
     rp.setPipeline(pipes.render);
     rp.setVertexBuffer(0, buffers.particleBuffer);
-    rp.draw(buffers.particleCount);
+    rp.draw(6, buffers.particleCount);
     rp.end();
 
     device.queue.submit([commandEncoder.finish()]);

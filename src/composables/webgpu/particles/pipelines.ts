@@ -10,7 +10,7 @@ export function createParticlePipelines(
 ): ParticlePipelines {
   const vertexBufferLayout: GPUVertexBufferLayout = {
     arrayStride: 32, // 32 bytes per particle
-    stepMode: 'vertex',
+    stepMode: 'instance',
     attributes: [
       {
         shaderLocation: 0,
@@ -67,7 +67,7 @@ export function createParticlePipelines(
       ],
     },
     primitive: {
-      topology: 'point-list',
+      topology: 'triangle-list',
     },
   });
 
