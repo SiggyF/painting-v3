@@ -33,6 +33,7 @@ export function useWebGPU() {
   let statsBGs: GPUBindGroup[] = [];
 
   let stateIdx = 0;
+  let isMapping = false;
   const activeColor = ref([1.0, 0.1, 0.4]);
 
   function updateActiveColor(hex: string) {
@@ -252,13 +253,15 @@ export function useWebGPU() {
     }
 
     // 3. Stats
-    commandEncoder.clearBuffer(statsBuf);
-    const cp = commandEncoder.beginComputePass();
-    cp.setPipeline(pipes.stats);
-    cp.setBindGroup(0, statsBGs[(stateIdx + 1) % 2]);
-    cp.dispatchWorkgroups(Math.ceil(core.simW / 16), Math.ceil(core.simH / 16));
-    cp.end();
-    commandEncoder.copyBufferToBuffer(statsBuf, 0, readBuf, 0, 64);
+    if (!isMapping) {
+      commandEncoder.clearBuffer(statsBuf);
+      const cp = commandEncoder.beginComputePass();
+      cp.setPipeline(pipes.stats);
+      cp.setBindGroup(0, statsBGs[(stateIdx + 1) % 2]);
+      cp.dispatchWorkgroups(Math.ceil(core.simW / 16), Math.ceil(core.simH / 16));
+      cp.end();
+      commandEncoder.copyBufferToBuffer(statsBuf, 0, readBuf, 0, 64);
+    }
 
     // 4. Final Render
     if (context) {
@@ -302,11 +305,19 @@ export function useWebGPU() {
   }
 
   async function getStats() {
-    if (!isInitialized.value) return null;
-    await readBuf.mapAsync(GPUMapMode.READ);
-    const data = new Uint32Array(readBuf.getMappedRange().slice(0));
-    readBuf.unmap();
-    return data;
+    if (!isInitialized.value || isMapping) return null;
+    isMapping = true;
+    try {
+      await readBuf.mapAsync(GPUMapMode.READ);
+      const data = new Uint32Array(readBuf.getMappedRange().slice(0));
+      readBuf.unmap();
+      return data;
+    } catch (e) {
+      console.warn("getStats mapping error:", e);
+      return null;
+    } finally {
+      isMapping = false;
+    }
   }
 
   function resize(width: number, height: number) {
