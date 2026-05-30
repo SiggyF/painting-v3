@@ -1,17 +1,6 @@
 import './style.css'
 import { useWebGPU } from './composables/useWebGPU'
-import maccormackPredictor from './shaders/maccormack_predictor.wgsl?raw';
-import maccormackCorrector from './shaders/maccormack_corrector.wgsl?raw';
-import bfeccPredictor from './shaders/bfecc_predictor.wgsl?raw';
-import bfeccCorrector from './shaders/bfecc_corrector.wgsl?raw';
-import rk4MaccormackPredictor from './shaders/rk4_maccormack_predictor.wgsl?raw';
-import rk4MaccormackCorrector from './shaders/rk4_maccormack_corrector.wgsl?raw';
-import tvdPredictor from './shaders/tvd_predictor.wgsl?raw';
-import tvdCorrector from './shaders/tvd_corrector.wgsl?raw';
-import advectionTemplateSource from './shaders/advection_template.wgsl?raw';
-import bicubicSource from './shaders/bicubic.wgsl?raw';
-import bilinearSource from './shaders/bilinear.wgsl?raw';
-import roeSource from './shaders/roe.wgsl?raw';
+import { presets, buildCustomAdvectCode } from './composables/webgpu/schemes'
 
 // Retrieve DOM elements
 const canvasA = document.getElementById('canvas-a') as HTMLCanvasElement;
@@ -19,7 +8,8 @@ const canvasB = document.getElementById('canvas-b') as HTMLCanvasElement;
 const videoElement = document.getElementById('sim-video') as HTMLVideoElement;
 const imageElement = document.getElementById('sim-image') as HTMLImageElement;
 const modelSelect = document.getElementById('param-model') as HTMLSelectElement;
-const presetSelect = document.getElementById('preset-scheme') as HTMLSelectElement;
+const selectPredictor = document.getElementById('select-predictor') as HTMLSelectElement;
+const selectCorrector = document.getElementById('select-corrector') as HTMLSelectElement;
 const shaderEditor = document.getElementById('shader-editor') as HTMLTextAreaElement;
 const applyBtn = document.getElementById('btn-apply-shader') as HTMLButtonElement;
 const compilerStatus = document.getElementById('compiler-status') as HTMLSpanElement;
@@ -165,28 +155,11 @@ function updatePlayPauseUI() {
   }
 }
 
-function buildAdvectPreset(config: {
-  predictorAdvect: string;
-  correctorBody: string;
-}) {
-  return advectionTemplateSource
-    .replace('__PREDICTOR_ADVECT__', config.predictorAdvect)
-    .replace('__CORRECTOR_BODY__', config.correctorBody);
-}
-
-const presets: Record<string, string> = {
-  'mac-cormack': buildAdvectPreset({ predictorAdvect: maccormackPredictor, correctorBody: maccormackCorrector }),
-  'bfecc': buildAdvectPreset({ predictorAdvect: bfeccPredictor, correctorBody: bfeccCorrector }),
-  'rk4-maccormack': buildAdvectPreset({ predictorAdvect: rk4MaccormackPredictor, correctorBody: rk4MaccormackCorrector }),
-  'tvd': buildAdvectPreset({ predictorAdvect: tvdPredictor, correctorBody: tvdCorrector }),
-  'bicubic': bicubicSource,
-  'bilinear': bilinearSource,
-  'roe': roeSource
-};
+// Presets are imported from composables/webgpu/schemes
 
 // Simulation parameters
 const gpuParamsA = {
-  speed: 0.16, blend: 0.0, time: 0.0, aspect: 1.0, scale: 16.0,
+  speed: 0.16, blend: 0.0, time: 0.0, aspect: 1.0, noiseScale: 64.0, scale: 16.0,
   mouseX: -1.0, mouseY: -1.0, isDrawing: 0.0, mouseDirX: 0.0, mouseDirY: 0.0,
   uvScale: 1.6, flipv: 1.0, mouseRadius: 0.005, decay: 1.0, viscosity: 0.0,
   scheme: 0.0, // Left canvas is Bilinear
@@ -194,7 +167,7 @@ const gpuParamsA = {
 };
 
 const gpuParamsB = {
-  speed: 0.16, blend: 0.0, time: 0.0, aspect: 1.0, scale: 16.0,
+  speed: 0.16, blend: 0.0, time: 0.0, aspect: 1.0, noiseScale: 64.0, scale: 16.0,
   mouseX: -1.0, mouseY: -1.0, isDrawing: 0.0, mouseDirX: 0.0, mouseDirY: 0.0,
   uvScale: 1.6, flipv: 1.0, mouseRadius: 0.005, decay: 1.0, viscosity: 0.0,
   scheme: 1.0, // Right canvas uses pluggable custom solver
@@ -204,6 +177,11 @@ const gpuParamsB = {
 let currentSourceType = 'video';
 let isPersistentSource = false;
 let modelsList: any[] = [];
+let schemeData: {
+  predictors: any[];
+  correctors: any[];
+  presets: any[];
+} = { predictors: [], correctors: [], presets: [] };
 
 let maxMassA = 0;
 let maxMassB = 0;
@@ -239,10 +217,6 @@ function resetMassStats() {
   if (dissipLabelB) dissipLabelB.textContent = `Dissip: 0.0%`;
   if (diffusLabelB) diffusLabelB.textContent = `Diffus: 0.0%`;
 }
-
-// Synchronized continuous paint triggers
-let isQPressed = false;
-let isGPressed = false;
 
 // Mirror quivers injection
 function addQuivers() {
@@ -280,12 +254,14 @@ function addGrid() {
   paintCtx.strokeStyle = '#ffffff';
   paintCtx.lineWidth = 4.0;
 
+  paintCtx.beginPath();
   for (let x = xMin; x <= xMax + 0.1; x += step) {
-    paintCtx.beginPath(); paintCtx.moveTo(x, yMin); paintCtx.lineTo(x, yMax); paintCtx.stroke();
+    paintCtx.moveTo(x, yMin); paintCtx.lineTo(x, yMax);
   }
   for (let y = yMin; y <= yMax + 0.1; y += step) {
-    paintCtx.beginPath(); paintCtx.moveTo(xMin, y); paintCtx.lineTo(xMax, y); paintCtx.stroke();
+    paintCtx.moveTo(xMin, y); paintCtx.lineTo(xMax, y);
   }
+  paintCtx.stroke();
 }
 
 // Mirror slotted cylinder (Zalesak's Disk) injection
@@ -363,6 +339,98 @@ function updateMouseCoordinates(e: MouseEvent, canvas: HTMLCanvasElement) {
   gpuParamsB.mouseY = ny;
 }
 
+function parseMarkdown(md: string): string {
+  let html = md;
+  
+  // 1. Headers
+  html = html.replace(/^# (.*?)$/gm, '<h1 class="text-sm font-bold text-sky-400 border-b border-sky-500/20 pb-1 mb-2">$1</h1>');
+  html = html.replace(/^## (.*?)$/gm, '<h2 class="text-xs font-bold text-slate-200 mt-3 mb-1.5">$1</h2>');
+  html = html.replace(/^### (.*?)$/gm, '<h3 class="text-[10px] font-bold text-slate-300 uppercase tracking-wider mt-3 mb-1.5">$1</h3>');
+  
+  // 2. Bold text
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-slate-100">$1</strong>');
+  
+  // 3. Inline code
+  html = html.replace(/`(.*?)`/g, '<code class="px-1 py-0.5 rounded bg-slate-900 border border-white/5 font-mono text-[9px] text-rose-400">$1</code>');
+  
+  // 4. Tables
+  const tableRegex = /((?:\|.*\|(?:\r?\n|$))+)/g;
+  html = html.replace(tableRegex, (match) => {
+    const lines = match.trim().split('\n');
+    let tableHtml = '<table class="w-full text-left border-collapse border border-white/5 text-[10px] my-2 bg-slate-950/40 rounded-lg overflow-hidden">';
+    let hasHeader = false;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.includes('---')) continue;
+      
+      const cells = line.split('|').slice(1, -1).map(c => c.trim());
+      if (cells.length === 0) continue;
+      
+      if (!hasHeader && i === 0) {
+        tableHtml += '<thead><tr class="bg-white/5 border-b border-white/5">';
+        cells.forEach(cell => {
+          tableHtml += `<th class="px-2.5 py-1.5 font-semibold text-slate-300">${cell}</th>`;
+        });
+        tableHtml += '</tr></thead><tbody>';
+        hasHeader = true;
+      } else {
+        tableHtml += '<tr class="border-b border-white/2.5 hover:bg-white/2.5 transition-colors">';
+        cells.forEach(cell => {
+          tableHtml += `<td class="px-2.5 py-1.5 text-slate-400">${cell}</td>`;
+        });
+        tableHtml += '</tr>';
+      }
+    }
+    tableHtml += '</tbody></table>';
+    return tableHtml;
+  });
+  
+  // 5. Paragraphs and lists
+  const blocks = html.split(/\n\n+/);
+  html = blocks.map(block => {
+    block = block.trim();
+    if (!block) return '';
+    if (block.startsWith('<h') || block.startsWith('<table') || block.startsWith('<ul') || block.startsWith('<li')) {
+      return block;
+    }
+    return `<p class="mb-2 text-slate-400 leading-relaxed">${block.replace(/\n/g, '<br>')}</p>`;
+  }).join('\n');
+
+  return html;
+}
+
+async function loadSolverDocumentation(predPath?: string, corrPath?: string) {
+  const descEl = document.getElementById('solver-description');
+  if (!descEl) return;
+  
+  descEl.innerHTML = '<span class="text-slate-500 italic animate-pulse">Loading documentation...</span>';
+  
+  try {
+    let html = '';
+    
+    if (predPath) {
+      const res = await fetch(`${import.meta.env.BASE_URL}${predPath}`);
+      if (res.ok) {
+        const text = await res.text();
+        html += `<div class="mb-4">${parseMarkdown(text)}</div>`;
+      }
+    }
+    
+    if (corrPath) {
+      const res = await fetch(`${import.meta.env.BASE_URL}${corrPath}`);
+      if (res.ok) {
+        const text = await res.text();
+        html += `<div class="border-t border-white/5 pt-4 mt-4">${parseMarkdown(text)}</div>`;
+      }
+    }
+    
+    descEl.innerHTML = html || '<span class="text-slate-500 italic">No description available</span>';
+  } catch (err) {
+    descEl.innerHTML = `<span class="text-red-400">Failed to load documentation.</span>`;
+  }
+}
+
 async function recompileShader() {
   compilerStatus.className = 'w-2 h-2 rounded-full bg-amber-500 animate-pulse';
   compilerLogs.textContent = 'Compiling and rebuilding WebGPU pipeline...';
@@ -374,6 +442,20 @@ async function recompileShader() {
   } else {
     compilerStatus.className = 'w-2 h-2 rounded-full bg-red-500';
     compilerLogs.textContent = `Compilation Error:\n${result.messages.join('\n')}`;
+  }
+
+  // Update Predictor / Corrector JIT code visualization panels
+  const codePredictorEl = document.getElementById('code-predictor');
+  const codeCorrectorEl = document.getElementById('code-corrector');
+  if (codePredictorEl && codeCorrectorEl) {
+    if (code.includes('fn sampleAdvectionCorrector')) {
+      const correctorIdx = code.indexOf('fn sampleAdvectionCorrector');
+      codePredictorEl.textContent = code.substring(0, correctorIdx).trim();
+      codeCorrectorEl.textContent = code.substring(correctorIdx).trim();
+    } else {
+      codePredictorEl.textContent = code.trim();
+      codeCorrectorEl.textContent = '// Single-Pass Solver (No Corrector Pass)';
+    }
   }
 }
 
@@ -406,19 +488,17 @@ function updateStats() {
   isFetchingStats = true;
   
   Promise.all([simA.getStats(), simB.getStats()]).then(([statsAData, statsBData]) => {
-    const fpsLabelA = statsA.children[0] as HTMLDivElement;
     const massLabelA = statsA.children[1] as HTMLDivElement;
     const dissipLabelA = statsA.children[2] as HTMLDivElement;
     const diffusLabelA = statsA.children[3] as HTMLDivElement;
     
-    const fpsLabelB = statsB.children[0] as HTMLDivElement;
     const massLabelB = statsB.children[1] as HTMLDivElement;
     const dissipLabelB = statsB.children[2] as HTMLDivElement;
     const diffusLabelB = statsB.children[3] as HTMLDivElement;
 
     if (statsAData) {
       const mass = statsAData[0] / 1000.0;
-      const peak = statsAData[12] / 1000.0;
+      const peak = statsAData[13] / 1000.0;
       if (mass > maxMassA) maxMassA = mass;
       if (peak > maxPeakA) maxPeakA = peak;
       currentDissipationA = maxMassA > 1.0 ? (1.0 - mass / maxMassA) * 100.0 : 0.0;
@@ -430,7 +510,7 @@ function updateStats() {
 
     if (statsBData) {
       const mass = statsBData[0] / 1000.0;
-      const peak = statsBData[12] / 1000.0;
+      const peak = statsBData[13] / 1000.0;
       if (mass > maxMassB) maxMassB = mass;
       if (peak > maxPeakB) maxPeakB = peak;
       currentDissipationB = maxMassB > 1.0 ? (1.0 - mass / maxMassB) * 100.0 : 0.0;
@@ -481,11 +561,11 @@ function loop() {
 
   if (currentSourceType === 'video' && videoElement.readyState >= 2) {
     if (videoElement.paused) videoElement.play().catch(() => {});
-    simA.updateUVTexture(videoElement);
-    simB.updateUVTexture(videoElement);
+    simA.updateUVTexture(videoElement, gpuParamsA.flipv > 0.5);
+    simB.updateUVTexture(videoElement, gpuParamsB.flipv > 0.5);
   } else if (currentSourceType === 'image' && imageElement.complete) {
-    simA.updateUVTexture(imageElement);
-    simB.updateUVTexture(imageElement);
+    simA.updateUVTexture(imageElement, gpuParamsA.flipv > 0.5);
+    simB.updateUVTexture(imageElement, gpuParamsB.flipv > 0.5);
   }
 
   const currentParamsA = { ...gpuParamsA, speed: isPaused ? 0.0 : gpuParamsA.speed };
@@ -612,8 +692,8 @@ function bindEvents() {
     addGrid();
     simA.updatePaintTexture(paintCanvas);
     simB.updatePaintTexture(paintCanvas);
-    simA.loadPaintCanvasToSimulation(false);
-    simB.loadPaintCanvasToSimulation(false);
+    simA.loadPaintCanvasToSimulation(true);
+    simB.loadPaintCanvasToSimulation(true);
     paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
     simA.updatePaintTexture(paintCanvas);
     simB.updatePaintTexture(paintCanvas);
@@ -623,8 +703,8 @@ function bindEvents() {
     addQuivers();
     simA.updatePaintTexture(paintCanvas);
     simB.updatePaintTexture(paintCanvas);
-    simA.loadPaintCanvasToSimulation(false);
-    simB.loadPaintCanvasToSimulation(false);
+    simA.loadPaintCanvasToSimulation(true);
+    simB.loadPaintCanvasToSimulation(true);
     paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
     simA.updatePaintTexture(paintCanvas);
     simB.updatePaintTexture(paintCanvas);
@@ -634,8 +714,8 @@ function bindEvents() {
     addSlottedCylinder();
     simA.updatePaintTexture(paintCanvas);
     simB.updatePaintTexture(paintCanvas);
-    simA.loadPaintCanvasToSimulation(false);
-    simB.loadPaintCanvasToSimulation(false);
+    simA.loadPaintCanvasToSimulation(true);
+    simB.loadPaintCanvasToSimulation(true);
     paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
     simA.updatePaintTexture(paintCanvas);
     simB.updatePaintTexture(paintCanvas);
@@ -651,10 +731,57 @@ function bindEvents() {
     if (stepsLabelB) stepsLabelB.textContent = `Steps: 0`;
   });
 
-  presetSelect.addEventListener('change', () => {
-    shaderEditor.value = presets[presetSelect.value] || '';
-    recompileShader();
+  // Populate dropdowns from schemes.json
+  selectPredictor.innerHTML = '';
+  schemeData.predictors.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name;
+    selectPredictor.appendChild(opt);
   });
+
+  const updateCorrectorDropdown = () => {
+    const selectedPredictorId = selectPredictor.value;
+    selectCorrector.innerHTML = '';
+    const compatible = schemeData.correctors.filter(c => 
+      c.compatiblePredictors.includes(selectedPredictorId)
+    );
+    compatible.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      selectCorrector.appendChild(opt);
+    });
+  };
+
+  const handleSelectionChange = () => {
+    const predictorId = selectPredictor.value;
+    const correctorId = selectCorrector.value;
+    const code = buildCustomAdvectCode(predictorId, correctorId);
+    shaderEditor.value = code;
+
+    const preset = schemeData.presets.find(p => p.predictor === predictorId && p.corrector === correctorId);
+    gpuParamsB.scheme = preset ? preset.schemeId : 1.0;
+
+    recompileShader();
+
+    const predictor = schemeData.predictors.find(p => p.id === predictorId);
+    const corrector = schemeData.correctors.find(c => c.id === correctorId);
+    loadSolverDocumentation(predictor?.docs, corrector?.docs);
+
+    // Update active scheme label in the viewport overlay
+    const activeLabel = document.getElementById('active-scheme-label');
+    if (activeLabel) {
+      activeLabel.textContent = `${predictor?.name || predictorId} + ${corrector?.name || correctorId}`;
+    }
+  };
+
+  selectPredictor.addEventListener('change', () => {
+    updateCorrectorDropdown();
+    handleSelectionChange();
+  });
+
+  selectCorrector.addEventListener('change', handleSelectionChange);
 
   applyBtn.addEventListener('click', recompileShader);
   window.addEventListener('keydown', (e) => {
@@ -663,8 +790,35 @@ function bindEvents() {
   window.addEventListener('resize', resize);
 }
 
+async function loadSchemesData() {
+  try {
+    const res = await fetch(`${import.meta.env.BASE_URL}data/schemes.json`);
+    schemeData = await res.json();
+  } catch (err) {
+    console.error('Error fetching schemes data:', err);
+  }
+}
+
 async function start() {
-  shaderEditor.value = presets['mac-cormack'];
+  await loadSchemesData();
+  
+  if (selectPredictor && selectCorrector) {
+    selectPredictor.value = 'semi-lagrangian';
+    const selectedPredictorId = 'semi-lagrangian';
+    selectCorrector.innerHTML = '';
+    const compatible = schemeData.correctors.filter(c => 
+      c.compatiblePredictors.includes(selectedPredictorId)
+    );
+    compatible.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      selectCorrector.appendChild(opt);
+    });
+    selectCorrector.value = 'maccormack';
+  }
+
+  shaderEditor.value = presets['semi-lagrangian-maccormack'];
   const w = Math.floor(canvasA.parentElement!.clientWidth) || 800;
   const h = Math.floor(canvasA.parentElement!.clientHeight) || 600;
   const size = Math.min(w, h);
@@ -673,7 +827,7 @@ async function start() {
   paintCanvas.width = size * 2; paintCanvas.height = size * 2;
   await simA.init(canvasA);
   await simB.init(canvasB);
-  const res = await simB.compileAdvectPipeline(presets['mac-cormack']);
+  const res = await simB.compileAdvectPipeline(presets['semi-lagrangian-maccormack']);
   if (!res.success) {
     compilerStatus.className = 'w-2 h-2 rounded-full bg-red-500';
     compilerLogs.textContent = `Compilation Error on Startup:\n${res.messages.join('\n')}`;
@@ -681,6 +835,18 @@ async function start() {
   }
   resize();
   bindEvents();
+  
+  const initialPreset = schemeData.presets.find(p => p.id === 'semi-lagrangian-maccormack');
+  const initialPred = schemeData.predictors.find(p => p.id === initialPreset?.predictor);
+  const initialCorr = schemeData.correctors.find(c => c.id === initialPreset?.corrector);
+  loadSolverDocumentation(initialPred?.docs, initialCorr?.docs);
+
+  // Update active scheme label in the viewport overlay
+  const activeLabel = document.getElementById('active-scheme-label');
+  if (activeLabel) {
+    activeLabel.textContent = `${initialPred?.name || 'Semi-Lagrangian'} + ${initialCorr?.name || 'MacCormack'}`;
+  }
+  
   updatePlayPauseUI();
   await initModels();
   loop();

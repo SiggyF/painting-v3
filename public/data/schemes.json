@@ -1,0 +1,28 @@
+{
+  "predictors": [
+    { "id": "bilinear", "name": "Bilinear", "docs": "data/schemes/bilinear.md" },
+    { "id": "bicubic", "name": "Bicubic Interpolation", "docs": "data/schemes/bicubic.md" },
+    { "id": "semi-lagrangian", "name": "Semi-Lagrangian", "docs": "data/schemes/semi-lagrangian.md" },
+    { "id": "upwind", "name": "First-Order Upwind (Finite Volume)", "docs": "data/schemes/upwind.md" },
+    { "id": "rk4", "name": "Runge-Kutta 4 (RK4)", "docs": "data/schemes/rk4.md" },
+    { "id": "roe", "name": "Roe Solver", "docs": "data/schemes/roe.md" }
+  ],
+  "correctors": [
+    { "id": "none", "name": "None (Single Pass)", "docs": "data/schemes/none.md", "compatiblePredictors": ["bilinear", "semi-lagrangian", "rk4", "upwind", "bicubic", "roe"] },
+    { "id": "maccormack", "name": "MacCormack", "docs": "data/schemes/maccormack.md", "compatiblePredictors": ["semi-lagrangian", "rk4"] },
+    { "id": "bfecc", "name": "BFECC", "docs": "data/schemes/bfecc.md", "compatiblePredictors": ["semi-lagrangian"] },
+    { "id": "tvd", "name": "TVD Limiter", "docs": "data/schemes/tvd.md", "compatiblePredictors": ["semi-lagrangian"] },
+    { "id": "fct", "name": "Flux-Corrected Transport (FCT)", "docs": "data/schemes/fct.md", "compatiblePredictors": ["upwind"] }
+  ],
+  "presets": [
+    { "id": "bilinear-none", "name": "Bilinear", "mainAppName": "Bilinear", "predictor": "bilinear", "corrector": "none", "schemeId": 0.0 },
+    { "id": "semi-lagrangian-maccormack", "name": "SemiLagrangian-MacCormack", "mainAppName": "MacCormack", "predictor": "semi-lagrangian", "corrector": "maccormack", "schemeId": 1.0 },
+    { "id": "semi-lagrangian-bfecc", "name": "SemiLagrangian-BFECC", "predictor": "semi-lagrangian", "corrector": "bfecc", "schemeId": 1.0 },
+    { "id": "rk4-maccormack", "name": "RK4-MacCormack", "predictor": "rk4", "corrector": "maccormack", "schemeId": 1.0 },
+    { "id": "semi-lagrangian-tvd", "name": "SemiLagrangian-TVD", "predictor": "semi-lagrangian", "corrector": "tvd", "schemeId": 1.0 },
+    { "id": "upwind-none", "name": "Upwind-None", "predictor": "upwind", "corrector": "none", "schemeId": 4.0 },
+    { "id": "upwind-fct", "name": "Upwind-FCT", "mainAppName": "Upwind-FCT", "predictor": "upwind", "corrector": "fct", "schemeId": 5.0 },
+    { "id": "bicubic-none", "name": "Bicubic-None", "predictor": "bicubic", "corrector": "none", "schemeId": 1.0 },
+    { "id": "roe-none", "name": "Roe-None", "predictor": "roe", "corrector": "none", "schemeId": 6.0 }
+  ]
+}

@@ -3,7 +3,7 @@ fn sampleAdvection(uv: vec2<f32>, prevUV: vec2<f32>, vel: vec2<f32>) -> vec4<f32
     let texelSize = 1.0 / texSize;
     
     let vel_uv = vel * vec2<f32>(1.0 / params.aspectRatio, 1.0);
-    let dt = 0.005;
+    let dt = 0.00125;
     
     // CFL number calculation
     let cfl = (abs(vel_uv.x) * texSize.x + abs(vel_uv.y) * texSize.y) * dt;

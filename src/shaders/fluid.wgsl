@@ -55,9 +55,6 @@ fn getVelocity(uv: vec2<f32>, time: f32, p: Params) -> vec2<f32> {
     } else {
         // 1. Sample from Video/Image UV Texture
         var sampleUV = uv;
-        if (p.flipv > 0.5) {
-            sampleUV.y = 1.0 - sampleUV.y;
-        }
         
         let uvData = textureSample(uvTex, uvSampler, sampleUV).rg;
         var vVideo = (uvData - 0.5) * p.uvScale;
@@ -132,18 +129,19 @@ fn source_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var prevStateTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> params: Params;
+@group(0) @binding(7) var origStateTex: texture_2d<f32>;
 
 // ADVECTION_SOLVER_START
 fn sampleAdvection(uv: vec2<f32>, prevUV: vec2<f32>, vel: vec2<f32>) -> vec4<f32> {
     return textureSample(prevStateTex, samp, prevUV);
 }
+fn sampleAdvectionCorrector(uv: vec2<f32>, prevUV: vec2<f32>, vel: vec2<f32>, fp: vec4<f32>, f_curr: vec4<f32>, aspect: vec2<f32>) -> vec4<f32> {
+    return fp;
+}
 // ADVECTION_SOLVER_END
 
-@fragment
-fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
-    // Spatially uniform viscous drag to avoid numerical checkerboard feedback loops
+fn getSimulationVelocity(uv: vec2<f32>) -> vec2<f32> {
     let velocityScale = 1.0 - params.viscosity * 0.85;
-
     let uvA = vec2<f32>(uv.x * params.aspectRatio, uv.y);
     var vel = getVelocity(uv, params.time, params);
 
@@ -155,21 +153,15 @@ fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     let term = (Dx * r.y - Dy * r.x) * 2.0 / 0.003;
     vel += f * vec2<f32>(Dx - r.y * term, Dy + r.x * term);
 
-    // Apply viscosity/drag scaling to the advection velocity
-    vel = vel * velocityScale;
+    return vel * velocityScale;
+}
 
-    // Backwards Advection
-    let prevUV = uv - vel * 0.005 * vec2<f32>(1.0 / params.aspectRatio, 1.0);
-    let prevState = sampleAdvection(uv, prevUV, vel);
-    
-    // Read previous pigment and concentration
-    var pigment = prevState.rgb;
-    var concentration = prevState.a;
+fn processAdvectedState(uv: vec2<f32>, advectedState: vec4<f32>) -> vec4<f32> {
+    var pigment = advectedState.rgb;
+    var concentration = advectedState.a;
 
     // Viscosity (Cohesive Decay / Surface Tension)
     if (params.viscosity > 0.001) {
-        // Non-linear edge decay: low concentration (blurry edges) decays faster to keep the core blob sharp.
-        // This is 100% stable since it doesn't couple neighboring pixels.
         let edgeDecay = mix(1.0, 0.94, smoothstep(0.6, 0.1, concentration));
         concentration = concentration * mix(1.0, edgeDecay, params.viscosity);
     }
@@ -177,30 +169,50 @@ fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     // Sample from Persistent Source Texture
     let source = textureSample(sourceTex, samp, uv);
     if (source.a > 0.01) {
-        // Smoothly blend the new pigment color
         pigment = mix(pigment, source.rgb, source.a * 0.5);
-        
-        // STABLE SATURATION MODEL:
-        // Instead of adding indefinitely (overflow), we move towards a target concentration (1.5).
-        // This ensures the simulation "fills up" but never explodes.
         let fillRate = 0.8; 
         concentration += (1.5 - concentration) * source.a * fillRate;
     }
 
-    // Apply model decay (only concentration fades over time)
+    // Apply model decay
     concentration *= params.decay;
 
     // Masking using the blue channel of the UV source texture
-    var sampleUV = uv;
-    if (params.flipv > 0.5) {
-        sampleUV.y = 1.0 - sampleUV.y;
-    }
-    let mask = textureSample(uvTex, uvSampler, sampleUV).b;
+    let mask = textureSample(uvTex, uvSampler, uv).b;
     if (mask > 0.01) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
     return vec4<f32>(clamp(pigment, vec3<f32>(0.0), vec3<f32>(1.0)), clamp(concentration, 0.0, 2.0));
+}
+
+@fragment
+fn advect_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+    let vel = getSimulationVelocity(uv);
+
+    // Backwards Advection
+    let dt = select(0.005, 0.00125, params.scheme >= 4.0 && params.scheme <= 6.0);
+    let prevUV = uv - vel * dt * vec2<f32>(1.0 / params.aspectRatio, 1.0);
+    let prevState = sampleAdvection(uv, prevUV, vel);
+    
+    return processAdvectedState(uv, prevState);
+}
+
+@fragment
+fn advect_main2(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+    let vel = getSimulationVelocity(uv);
+
+    // Backwards Advection
+    let aspect = vec2<f32>(1.0 / params.aspectRatio, 1.0);
+    let dt = select(0.005, 0.00125, params.scheme >= 4.0 && params.scheme <= 6.0);
+    let prevUV = uv - vel * dt * aspect;
+    
+    let fp = textureSample(prevStateTex, samp, uv);
+    let f_curr = textureSample(origStateTex, samp, uv);
+    
+    let f_final = sampleAdvectionCorrector(uv, prevUV, vel, fp, f_curr, aspect);
+    
+    return processAdvectedState(uv, f_final);
 }
 
 // --- Render Shader ---
@@ -210,9 +222,6 @@ fn render_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     let s = textureSample(stateTex, samp, uv);
 
     var sampleUV = uv;
-    if (params.flipv > 0.5) {
-        sampleUV.y = 1.0 - sampleUV.y;
-    }
     let mask = textureSample(uvTex, uvSampler, sampleUV).b;
     if (mask > 0.01) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -224,19 +233,21 @@ fn render_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 
     let finalRGB = clamp(pigmentColor * pigmentOpacity, vec3<f32>(0.0), vec3<f32>(1.0));
 
-    return vec4<f32>(finalRGB, clamp(pigmentOpacity, 0.0, 1.0));
+    // Ensure params (binding 2) is used so it's not optimized out of the layout
+    let dummy_val = params.speed * 0.0;
+    return vec4<f32>(finalRGB + dummy_val, clamp(pigmentOpacity, 0.0, 1.0));
 }
 
 // --- Stats Compute Shader ---
 @group(0) @binding(0) var statsTex: texture_2d<f32>;
 @group(0) @binding(1) var<storage, read_write> stats: array<atomic<u32>>;
 
-var<workgroup> localStats: array<atomic<u32>, 13>;
+var<workgroup> localStats: array<atomic<u32>, 14>;
 
 @compute @workgroup_size(16, 16)
 fn stats_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
     if (lid.x == 0u && lid.y == 0u) {
-        for (var i = 0u; i < 13u; i++) { atomicStore(&localStats[i], 0u); }
+        for (var i = 0u; i < 14u; i++) { atomicStore(&localStats[i], 0u); }
     }
     workgroupBarrier();
 
@@ -250,8 +261,8 @@ fn stats_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoc
         atomicAdd(&localStats[0], u32(concentration * 1000.0));
         
         // Track peak concentration (Diffusivity metric)
-        // Store max in index 12
-        atomicMax(&localStats[12], u32(concentration * 1000.0));
+        // Store max in index 13 (avoiding collision with histogram bin 9 at index 12)
+        atomicMax(&localStats[13], u32(concentration * 1000.0));
 
         // Secondary stats: raw pigment sums
         atomicAdd(&localStats[1], u32(max(0.0, p.r) * 100.0));
@@ -263,6 +274,6 @@ fn stats_main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoc
     workgroupBarrier();
 
     if (lid.x == 0u && lid.y == 0u) {
-        for (var i = 0u; i < 13u; i++) { atomicAdd(&stats[i], atomicLoad(&localStats[i])); }
+        for (var i = 0u; i < 14u; i++) { atomicAdd(&stats[i], atomicLoad(&localStats[i])); }
     }
 }
