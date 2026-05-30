@@ -1,6 +1,6 @@
 import './style.css'
 import { useWebGPU } from './composables/useWebGPU'
-import { presets, buildCustomAdvectCode } from './composables/webgpu/schemes'
+import { presets, buildCustomAdvectCode } from './composables/webgpu/flow/schemes'
 
 // Retrieve DOM elements
 const canvasA = document.getElementById('canvas-a') as HTMLCanvasElement;

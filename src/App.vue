@@ -2,19 +2,21 @@
 import { ref, onMounted, reactive, onUnmounted, computed } from 'vue'
 import L from 'leaflet'
 import { WebGPULayer } from './utils/WebGPULayer'
-import { useWebGPU } from './composables/useWebGPU'
+import { initWebGPU, useSharedResources, useFlow, useParticles } from './composables/useWebGPU'
+import type { GPUCore, SharedTextures } from './composables/useWebGPU'
 import type { GPUParams } from './composables/webgpu/types'
-import { buildCustomAdvectCode } from './composables/webgpu/schemes'
+import { buildCustomAdvectCode } from './composables/webgpu/flow/schemes'
+
+import ClockWidget from './components/ClockWidget.vue'
+import InstructionCard from './components/InstructionCard.vue'
+import SidebarSettings from './components/SidebarSettings.vue'
+import DomainDetails from './components/DomainDetails.vue'
 
 const selectedPredictorId = ref('bilinear')
 const selectedCorrectorId = ref('none')
 const allPredictors = ref<any[]>([])
 const allCorrectors = ref<any[]>([])
 const presetsList = ref<any[]>([])
-import ModelsOverview from './components/ModelsOverview.vue'
-import ColorSelection from './components/ColorSelection.vue'
-import DrawingShortcuts from './components/DrawingShortcuts.vue'
-import ImageStamps from './components/ImageStamps.vue'
 
 const mapContainer = ref<HTMLElement | null>(null)
 const sidebarOpen = ref(true)
@@ -86,7 +88,27 @@ const handleSelectPainting = (url: string) => {
   img.src = url
 }
 
-const { init, render, resize, updateUVTexture, updatePaintTexture, clearTextures, clearSource, updateActiveColor, activeColor, loadPaintCanvasToSimulation, getStats, compileAdvectPipeline } = useWebGPU()
+const flow = useFlow()
+const particles = useParticles()
+let core: GPUCore | null = null
+let sharedResources: ReturnType<typeof useSharedResources> | null = null
+
+const activeColor = flow.activeColor
+const updateActiveColor = flow.updateActiveColor
+const clearTextures = flow.clearTextures
+const clearSource = flow.clearSource
+const loadPaintCanvasToSimulation = flow.loadPaintCanvasToSimulation
+const getStats = flow.getStats
+
+const updatePaintTexture = (source: HTMLCanvasElement) => {
+  if (sharedResources) {
+    sharedResources.updatePaintTexture(source)
+    flow.createBindGroups()
+    particles.rebind()
+  }
+}
+
+const compileAdvectPipeline = flow.compileAdvectPipeline
 
 const filteredCorrectors = computed(() => {
   return allCorrectors.value.filter(c => c.compatiblePredictors.includes(selectedPredictorId.value))
@@ -480,6 +502,7 @@ const gpuParams = reactive<GPUParams>({
 })
 
 let gpuLayer: WebGPULayer | null = null
+let particleLayer: WebGPULayer | null = null
 let animationFrameId: number | null = null
 
 let maxMass = 0
@@ -551,15 +574,40 @@ onMounted(() => {
     gpuLayer = new WebGPULayer()
     gpuLayer.addTo(leafletMap)
     
+    particleLayer = new WebGPULayer()
+    particleLayer.addTo(leafletMap)
+    
     const canvas = gpuLayer.getCanvas()
-    if (canvas) {
+    const pCanvas = particleLayer.getCanvas()
+    
+    if (canvas && pCanvas) {
       canvas.style.mixBlendMode = 'screen'
-      init(canvas).then(async () => {
+      pCanvas.style.mixBlendMode = 'screen'
+      
+      initWebGPU().then(async (c) => {
+        core = c
+        sharedResources = useSharedResources(core)
+
+        // Force an initial texture creation before passing to modules
+        sharedResources.updateUVTexture(document.createElement('canvas'))
+
+        const context = canvas.getContext('webgpu') as GPUCanvasContext
+        context.configure({ device: core.device, format: core.format, alphaMode: 'premultiplied' })
+        
+        const pContext = pCanvas.getContext('webgpu') as GPUCanvasContext
+        pContext.configure({ device: core.device, format: core.format, alphaMode: 'premultiplied' })
+
+        // Initialize modules with shared textures
+        await flow.init(core, sharedResources.textures.value as SharedTextures, context)
+        await particles.init(core, sharedResources.textures.value as SharedTextures, pContext, 65536)
+
         gpuParams.aspect = canvas.width / canvas.height
         // Explicitly set initial state: Map navigation active
         leafletMap!.dragging.enable()
         canvas.style.pointerEvents = 'none'
         canvas.style.cursor = 'default'
+        pCanvas.style.pointerEvents = 'none'
+        pCanvas.style.cursor = 'default'
         
         startLoop()
         await fetchModels()
@@ -611,7 +659,12 @@ onMounted(() => {
     gpuLayer.on('canvas-resize', (e: any) => {
       const wasZero = paintCanvas.width === 0;
       
-      resize(e.width, e.height)
+      if (core) {
+        core.simW = e.width;
+        core.simH = e.height;
+      }
+      flow.resize(e.width, e.height)
+      
       gpuParams.aspect = e.width / e.height
       
       // Higher resolution for paint source (2x supersampling)
@@ -622,6 +675,13 @@ onMounted(() => {
       if (wasZero || !initialQuiversInjected) {
         injectPattern('quivers')
         initialQuiversInjected = true
+      }
+    })
+    
+    particleLayer.on('canvas-resize', (e: any) => {
+      if (pCanvas) {
+        pCanvas.width = e.width
+        pCanvas.height = e.height
       }
     })
   }
@@ -671,23 +731,30 @@ function startLoop() {
       }
     }
 
-    if (currentSourceType.value === 'video' && videoElement.value && videoElement.value.readyState >= 2) {
-      if (videoElement.value.paused) videoElement.value.play().catch(() => {})
-      updateUVTexture(videoElement.value, gpuParams.flipv > 0.5)
-      
-      // Update reactive progress for clock
-      if (videoElement.value.duration > 0) {
-        videoProgress.value = videoElement.value.currentTime / videoElement.value.duration
+    if (sharedResources) {
+      if (currentSourceType.value === 'video' && videoElement.value && videoElement.value.readyState >= 2) {
+        if (videoElement.value.paused) videoElement.value.play().catch(() => {})
+        sharedResources.updateUVTexture(videoElement.value, gpuParams.flipv > 0.5)
+        
+        // Update reactive progress for clock
+        if (videoElement.value.duration > 0) {
+          videoProgress.value = videoElement.value.currentTime / videoElement.value.duration
+        }
+      } else if (currentSourceType.value === 'image' && imageElement.value && imageElement.value.complete) {
+        sharedResources.updateUVTexture(imageElement.value, gpuParams.flipv > 0.5)
+        videoProgress.value = (gpuParams.time % 10.0) / 10.0 // Loop dummy progress for static images
       }
-    } else if (currentSourceType.value === 'image' && imageElement.value && imageElement.value.complete) {
-      updateUVTexture(imageElement.value, gpuParams.flipv > 0.5)
-      videoProgress.value = (gpuParams.time % 10.0) / 10.0 // Loop dummy progress for static images
+
+      // Upload 2D paint canvas to WebGPU
+      sharedResources.updatePaintTexture(paintCanvas)
     }
 
-    // Upload 2D paint canvas to WebGPU
-    updatePaintTexture(paintCanvas)
+    // Since updateUVTexture might recreate textures on resize, rebind pipelines if necessary
+    flow.createBindGroups()
+    particles.rebind()
     
-    render(gpuParams)
+    flow.render(gpuParams)
+    particles.render(gpuParams, 0.01)
 
     // Update stats overlay periodically
     if (Math.floor(gpuParams.time * 100) % 10 === 0) {
@@ -774,45 +841,10 @@ onUnmounted(() => {
       <div class="p-4 sm:p-6 flex justify-between items-start pointer-events-none">
         <div class="flex items-start gap-3 sm:gap-4 pointer-events-auto">
           <!-- Clock Widget -->
-          <div class="glass-panel p-3 sm:p-4 rounded-xl shadow-2xl ring-1 ring-white/10 flex items-center gap-3 sm:gap-4 bg-slate-900/40 backdrop-blur-md">
-            <div class="text-right">
-              <p class="text-[16px] sm:text-[18px] font-mono font-bold text-white tracking-tighter leading-none">
-                {{ modelTime.toLocaleTimeString([], { hour12: false }) }}
-              </p>
-              <p class="text-[8px] sm:text-[9px] uppercase tracking-[0.2em] text-sky-400/80 font-bold">
-                {{ modelTime.toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' }) }}
-              </p>
-            </div>
-            <div class="w-px h-8 bg-white/10"></div>
-            <div class="flex flex-col gap-0.5">
-               <div class="flex gap-1 items-center">
-                  <span class="w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></span>
-                  <span class="text-[7px] font-mono text-emerald-500/80 uppercase">GPS: 53.44N, 5.68E</span>
-               </div>
-               <div class="text-[7px] font-mono text-slate-500 uppercase flex gap-2">
-                  <span>FPS: 60.0</span>
-                  <span>MS: 16.6</span>
-               </div>
-            </div>
-            <div class="w-px h-8 bg-white/10"></div>
-            <div class="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-sky-500/10 flex items-center justify-center border border-sky-500/20">
-               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-sky-400"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-            </div>
-          </div>
+          <ClockWidget :model-time="modelTime" />
 
           <!-- Instruction Card -->
-          <div class="glass-panel p-3 sm:p-4 rounded-xl flex items-center gap-3 sm:gap-4 shadow-2xl ring-1 ring-white/10 bg-slate-900/40 backdrop-blur-md">
-            <div class="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-sky-500 flex items-center justify-center shadow-lg shadow-sky-500/20">
-               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="text-white"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
-            </div>
-            <div>
-              <h1 class="text-xs sm:text-sm font-bold text-white tracking-tight leading-tight">
-                <span class="hidden sm:inline">Hold <span class="text-sky-400">SHIFT</span> + MOVE to Paint</span>
-                <span class="sm:hidden">Hold <span class="text-sky-400">BUTTON</span> + MOVE to Paint</span>
-              </h1>
-              <p class="text-[8px] sm:text-[9px] uppercase tracking-[0.2em] text-slate-500 font-bold mt-0.5">Hydrodynamic Flow Engine</p>
-            </div>
-          </div>
+          <InstructionCard />
         </div>
 
         <div class="flex flex-col gap-4 items-end">
@@ -825,242 +857,29 @@ onUnmounted(() => {
           </button>
 
           <transition name="fade">
-            <div v-if="sidebarOpen" class="glass-panel rounded-2xl w-80 pointer-events-auto shadow-2xl ring-1 ring-white/10 overflow-hidden">
-              <!-- Tabs -->
-              <div class="flex border-b border-white/5 bg-white/5">
-                <button 
-                  v-for="tab in ['models', 'rendering', 'keys']" 
-                  :key="tab"
-                  @click="activeTab = tab"
-                  class="flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-colors"
-                  :class="activeTab === tab ? 'text-sky-400 bg-white/5' : 'text-slate-500 hover:text-slate-300'"
-                >
-                  {{ tab }}
-                </button>
-              </div>
-
-              <div class="p-5 max-h-[60vh] overflow-y-auto custom-scrollbar">
-                <div v-if="activeTab === 'models'" class="space-y-4">
-                  <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-2">Available Domains</h2>
-                  <ModelsOverview :models="modelsList" @select="handleModelSelect" />
-
-                  <!-- Flow Source Debug Section -->
-                  <div class="mt-6 pt-4 border-t border-white/5">
-                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-3">Flow Source Debug</h2>
-                    <div class="aspect-video w-full rounded-lg bg-black border border-white/10 overflow-hidden relative group">
-                      <video 
-                        v-if="currentSourceType === 'video' && currentVideoSrc"
-                        :src="currentVideoSrc"
-                        autoplay loop muted playsinline
-                        class="w-full h-full object-contain opacity-50 group-hover:opacity-100 transition-opacity"
-                      ></video>
-                      <img 
-                        v-else-if="currentSourceType === 'image' && currentImageSrc"
-                        :src="currentImageSrc"
-                        class="w-full h-full object-contain opacity-50 group-hover:opacity-100 transition-opacity"
-                      />
-                      <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
-                         <span class="text-[8px] text-sky-400 font-mono bg-black/40 px-2 py-1 rounded">
-                           {{ currentSourceType === 'video' ? 'LIVE UV FIELD (VIDEO)' : 'STATIC UV FIELD (IMAGE)' }}
-                         </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div v-if="activeTab === 'rendering'" class="space-y-6">
-                  <div>
-                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Domain Actions</h2>
-                    <div class="grid grid-cols-2 gap-2">
-                       <button @click="injectPattern('grid')" class="glass-panel py-2 rounded-lg bg-white/5 border border-white/5 text-[10px] uppercase font-bold text-slate-300 hover:bg-sky-500/20 hover:border-sky-500/50 transition-all flex items-center justify-center gap-2">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
-                          Add Grid
-                       </button>
-                       <button @click="injectPattern('quivers')" class="glass-panel py-2 rounded-lg bg-white/5 border border-white/5 text-[10px] uppercase font-bold text-slate-300 hover:bg-sky-500/20 hover:border-sky-500/50 transition-all flex items-center justify-center gap-2">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                          Add Quivers
-                       </button>
-                    </div>                  </div>
-
-                  <div>
-                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Numerical Scheme</h2>
-                    <div class="glass-panel p-3 rounded-xl bg-white/5 border border-white/5 group hover:border-sky-500/30 transition-all space-y-3">
-                      <div>
-                        <span class="text-[8px] font-bold text-slate-500 uppercase">Predictor</span>
-                        <select 
-                          v-model="selectedPredictorId" 
-                          @change="onPredictorChange"
-                          class="w-full bg-slate-900/80 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 transition-all cursor-pointer mt-1"
-                        >
-                          <option v-for="pred in allPredictors" :key="pred.id" :value="pred.id">
-                            {{ pred.name }}
-                          </option>
-                        </select>
-                      </div>
-                      <div>
-                        <span class="text-[8px] font-bold text-slate-500 uppercase">Corrector</span>
-                        <select 
-                          v-model="selectedCorrectorId" 
-                          @change="onCorrectorChange"
-                          class="w-full bg-slate-900/80 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 transition-all cursor-pointer mt-1"
-                        >
-                          <option v-for="corr in filteredCorrectors" :key="corr.id" :value="corr.id">
-                            {{ corr.name }}
-                          </option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Source Persistence</h2>
-                    <div class="flex items-center justify-between glass-panel p-3 rounded-xl bg-white/5 border border-white/5 group hover:border-sky-500/30 transition-all cursor-pointer" @click="isPersistentSource = !isPersistentSource">
-                       <div>
-                          <p class="text-xs font-semibold text-slate-200">Sticky Paint Sources</p>
-                          <p class="text-[8px] text-slate-500 uppercase tracking-tighter">Continually pour paint from drawn paths</p>
-                       </div>
-                       <div class="w-10 h-5 rounded-full bg-slate-800 relative transition-colors" :class="isPersistentSource ? 'bg-sky-500/40' : ''">
-                          <div class="absolute top-1 left-1 w-3 h-3 rounded-full bg-slate-400 transition-all" :class="isPersistentSource ? 'left-6 bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.8)]' : ''"></div>
-                       </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Simulation Persistence</h2>
-                    <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
-                      <span>Paint Decay</span>
-                      <span class="text-sky-400">{{ (gpuParams.decay * 100).toFixed(2) }}%</span>
-                    </div>
-                    <input 
-                      type="range" 
-                      v-model.number="gpuParams.decay" 
-                      min="0.95" max="1.0" step="0.001"
-                      class="w-full"
-                    >
-                    <p class="text-[8px] text-slate-600 mt-2 italic">100% means paint never fades, creating a persistent flow source.</p>
-                  </div>
-
-                  <div>
-                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Fluid Properties</h2>
-                    <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
-                      <span>Oil Viscosity</span>
-                      <span class="text-sky-400">{{ gpuParams.viscosity.toFixed(3) }}</span>
-                    </div>
-                    <input 
-                      type="range" 
-                      v-model.number="gpuParams.viscosity" 
-                      min="0.0" max="1.0" step="0.01"
-                      class="w-full"
-                    >
-                    <p class="text-[8px] text-slate-600 mt-2 italic">Simulates surface tension and drag so the paint forms cohesive, slow-moving blobs.</p>
-                  </div>
-
-                  <div>
-                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Flow Velocity</h2>
-                    <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
-                      <span>Sim Speed</span>
-                      <span class="text-sky-400">{{ gpuParams.speed.toFixed(2) }}x</span>
-                    </div>
-                    <input 
-                      type="range" 
-                      v-model.number="gpuParams.speed" 
-                      min="0.01" max="0.5" step="0.01"
-                      class="w-full"
-                    >
-                  </div>
-
-                  <div>
-                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Data Intensity</h2>
-                    <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
-                      <span>UV Scale</span>
-                      <span class="text-sky-400">{{ gpuParams.uvScale.toFixed(1) }}x</span>
-                    </div>
-                    <input 
-                      type="range" 
-                      v-model.number="gpuParams.uvScale" 
-                      min="0.1" max="10.0" step="0.1"
-                      class="w-full"
-                    >
-                  </div>
-
-                  <div>
-                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Turbulence Dynamics</h2>
-                    <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
-                      <span>Amplitude</span>
-                      <span class="text-sky-400">{{ gpuParams.blend.toFixed(2) }}</span>
-                    </div>
-                    <input 
-                      type="range" 
-                      v-model.number="gpuParams.blend" 
-                      min="0.0" max="2.0" step="0.05"
-                      class="w-full"
-                    >
-                    <div class="flex justify-between text-[11px] mb-2 mt-3 text-slate-400 font-mono">
-                      <span>Scale</span>
-                      <span class="text-sky-400">{{ gpuParams.scale.toFixed(1) }}</span>
-                    </div>
-                    <input 
-                      type="range" 
-                      v-model.number="gpuParams.scale" 
-                      min="1.0" max="20.0" step="0.1"
-                      class="w-full"
-                    >
-                  </div>
-
-                  <div>
-                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Brush Settings</h2>
-                    <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
-                      <span>Brush Size</span>
-                      <span class="text-sky-400">{{ (gpuParams.mouseRadius * 100).toFixed(2) }}%</span>
-                    </div>
-                    <input 
-                      type="range" 
-                      v-model.number="gpuParams.mouseRadius" 
-                      min="0.0005" max="0.02" step="0.0005"
-                      class="w-full"
-                    >
-                  </div>
-
-                  <div>
-                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Color Palette</h2>
-                    <ColorSelection 
-                      @update:color="(c) => { updateActiveColor(c); isColorLocked = true }" 
-                      @update:palette="(p) => { activePalette = p; isColorLocked = false }"
-                      @select-painting="handleSelectPainting"
-                    />
-                  </div>
-
-                  <div class="pt-4 border-t border-white/5">
-                    <ImageStamps 
-                      @select="handleSelectStamp"
-                      @clear="handleClearStamp"
-                    />
-                  </div>
-
-                  <div class="pt-4 border-t border-white/5 flex flex-col gap-2">
-                    <a 
-                      href="./schemes.html" 
-                      target="_blank"
-                      class="glass-panel py-3 rounded-lg bg-sky-500/10 border border-sky-500/20 text-[10px] uppercase font-bold text-sky-400 hover:bg-sky-500/20 hover:text-white transition-all flex items-center justify-center gap-2 text-center pointer-events-auto"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                      Compare Numerical Schemes
-                    </a>
-                  </div>
-                </div>
-
-                <div v-if="activeTab === 'keys'" class="space-y-4">
-                  <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Interaction Keys</h2>
-                  <DrawingShortcuts />
-                </div>
-              </div>
-              
-              <div class="p-4 bg-sky-500/5 border-t border-white/5">
-                <p class="text-[9px] text-slate-500 leading-relaxed italic text-center">
-                  WebGPU 1.0 Pipeline • Subtractive RYB Mixing
-                </p>
-              </div>
-            </div>
+            <SidebarSettings
+              v-if="sidebarOpen"
+              :models-list="modelsList"
+              :all-predictors="allPredictors"
+              :all-correctors="allCorrectors"
+              v-model:selected-predictor-id="selectedPredictorId"
+              v-model:selected-corrector-id="selectedCorrectorId"
+              :gpu-params="gpuParams"
+              v-model:is-persistent-source="isPersistentSource"
+              :current-source-type="currentSourceType"
+              :current-video-src="currentVideoSrc"
+              :current-image-src="currentImageSrc"
+              v-model:active-tab="activeTab"
+              @select-model="handleModelSelect"
+              @inject-pattern="injectPattern"
+              @select-painting="handleSelectPainting"
+              @select-stamp="handleSelectStamp"
+              @clear-stamp="handleClearStamp"
+              @predictor-change="onPredictorChange"
+              @corrector-change="onCorrectorChange"
+              @select-color="(c) => { updateActiveColor(c); isColorLocked = true }"
+              @select-palette="(p) => { activePalette = p; isColorLocked = false }"
+            />
           </transition>
         </div>
       </div>
@@ -1083,47 +902,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Bottom Panel (Domain Details) -->
-      <div class="mt-auto p-4 sm:p-6 pointer-events-none flex justify-center overflow-hidden">
-        <div v-if="selectedModel" class="glass-panel p-4 sm:p-5 rounded-2xl w-full max-w-3xl pointer-events-auto shadow-2xl ring-1 ring-white/10 flex flex-col sm:flex-row gap-4 sm:gap-6 max-h-[40vh] sm:max-h-none overflow-y-auto custom-scrollbar">
-          <div class="flex-1">
-             <h2 class="text-[10px] font-bold uppercase text-sky-400 tracking-widest border-b border-white/5 pb-2 mb-3 flex items-center gap-2">
-                <span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
-                Domain Information
-             </h2>
-             <div class="space-y-2">
-                <div>
-                   <h3 class="text-sm font-semibold text-slate-200">{{ selectedModel.title }}</h3>
-                   <p class="text-xs text-slate-400 leading-relaxed">{{ selectedModel.abstract || 'No description available' }}</p>
-                </div>
-                <div v-if="selectedModel.extent?.time" class="flex flex-col sm:flex-row gap-2 sm:gap-4 pt-2 text-[10px] uppercase text-slate-500">
-                   <div>
-                      <span class="block text-slate-600">Start Time</span>
-                      <span class="text-slate-300 font-mono">{{ new Date(selectedModel.extent.time[0]).toUTCString().split(' ').slice(1, 5).join(' ') }} UTC</span>
-                   </div>
-                   <div>
-                      <span class="block text-slate-600">End Time</span>
-                      <span class="text-slate-300 font-mono">{{ new Date(selectedModel.extent.time[1]).toUTCString().split(' ').slice(1, 5).join(' ') }} UTC</span>
-                   </div>
-                </div>
-             </div>
-          </div>
-          <div class="hidden sm:block w-px bg-white/5"></div>
-          <div class="w-full sm:w-48 flex flex-col justify-center border-t border-white/5 pt-4 sm:border-t-0 sm:pt-0">
-             <div class="text-[10px] uppercase text-slate-500 tracking-widest mb-1">Domain Engine</div>
-             <div class="text-md font-bold text-slate-200 truncate">{{ selectedModel.engine || 'WebGPU' }}</div>
-             <div class="mt-4 pt-4 border-t border-white/5 space-y-2">
-                <div class="flex justify-between text-[9px] uppercase text-slate-500">
-                   <span>Particles</span>
-                   <span class="text-sky-400 font-mono">1.2M</span>
-                </div>
-                <div class="flex justify-between text-[9px] uppercase text-slate-500">
-                   <span>Compute</span>
-                   <span class="text-sky-400 font-mono">1.4ms</span>
-                </div>
-             </div>
-          </div>
-        </div>
-      </div>
+      <DomainDetails :selected-model="selectedModel" />
 
     </div>
   </div>
