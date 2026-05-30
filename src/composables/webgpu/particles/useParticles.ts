@@ -21,6 +21,12 @@ export function useParticles() {
   let renderBG: GPUBindGroup;
   let hasLoggedCreate = false;
 
+  let particleAccumTex: GPUTexture | null = null;
+  let particleAccumView: GPUTextureView | null = null;
+  let copyBG: GPUBindGroup | null = null;
+  let width = 0;
+  let height = 0;
+
   function getShared(): SharedTextures | null {
     if (!sharedRef) return null;
     return ('value' in sharedRef) ? sharedRef.value : sharedRef;
@@ -44,8 +50,8 @@ export function useParticles() {
 
       uvSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
       
-      // time, speed, aspect, flipv, uvScale, dt
-      uniformBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      // time, speed, aspect, flipv, uvScale, dt, particleSize, particleOpacity
+      uniformBuf = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
       createBindGroups();
 
@@ -53,6 +59,22 @@ export function useParticles() {
     } catch (e: any) {
       error.value = e.message;
       console.error("Particle System Init Error:", e);
+    }
+  }
+
+  function createCopyBindGroup() {
+    if (!core || !pipes || !particleAccumView) return;
+    const { device } = core;
+    try {
+      copyBG = device.createBindGroup({
+        layout: pipes.copyBindGroupLayout,
+        entries: [
+          { binding: 0, resource: particleAccumView },
+          { binding: 1, resource: uvSampler }
+        ]
+      });
+    } catch (err) {
+      console.error("Error creating particle copy bind group:", err);
     }
   }
 
@@ -109,16 +131,62 @@ export function useParticles() {
       });
       if (!hasLoggedCreate) {
         console.log("renderBG created successfully:", !!renderBG);
+      }
+
+      createCopyBindGroup();
+
+      if (!hasLoggedCreate) {
         hasLoggedCreate = true;
       }
     } catch (err) {
-      console.error("Error creating particle bind group:", err);
+      console.error("Error creating particle bind groups:", err);
     }
   }
 
   // Exposed so it can be called if shared textures are resized/recreated
   function rebind() {
     createBindGroups();
+  }
+
+  function resize(w: number, h: number) {
+    if (!core) return;
+    const { device, format } = core;
+    
+    // Standardize bounds and fail fast on invalid dimensions
+    const roundedW = Math.max(1, Math.floor(w));
+    const roundedH = Math.max(1, Math.floor(h));
+    
+    if (roundedW === width && roundedH === height && particleAccumTex) return;
+    
+    width = roundedW;
+    height = roundedH;
+
+    if (particleAccumTex) {
+      particleAccumTex.destroy();
+    }
+
+    particleAccumTex = device.createTexture({
+      label: 'Particle Trail Accumulation Texture',
+      size: [width, height],
+      format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    particleAccumView = particleAccumTex.createView();
+
+    // Clear the newly created texture to transparent
+    const commandEncoder = device.createCommandEncoder();
+    const rp = commandEncoder.beginRenderPass({
+      colorAttachments: [{
+        view: particleAccumView,
+        loadOp: 'clear',
+        clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        storeOp: 'store'
+      }]
+    });
+    rp.end();
+    device.queue.submit([commandEncoder.finish()]);
+
+    createCopyBindGroup();
   }
 
   function render(params: any, dt: number) {
@@ -136,9 +204,16 @@ export function useParticles() {
     // Update uniforms
     const uniformData = new Float32Array([
       params.time, params.speed, params.aspect, params.flipv,
-      params.uvScale, dt
+      params.uvScale, dt,
+      params.particleSize ?? 0.003, params.particleOpacity ?? 0.25,
+      params.particleColorMode ?? 0.0,
+      params.particleColorR ?? 1.0,
+      params.particleColorG ?? 1.0,
+      params.particleColorB ?? 1.0,
+      params.particleColormapId ?? 0.0, 0.0, 0.0, 0.0
     ]);
     device.queue.writeBuffer(uniformBuf, 0, uniformData);
+
 
     const commandEncoder = device.createCommandEncoder();
 
@@ -150,20 +225,70 @@ export function useParticles() {
     cp.dispatchWorkgroups(workgroupCount);
     cp.end();
 
-    // 2. Render Pass: Draw particles
-    const rp = commandEncoder.beginRenderPass({
-      colorAttachments: [{
-        view: context.getCurrentTexture().createView(),
-        loadOp: 'clear',
-        clearValue: { r: 0, g: 0, b: 0, a: 0 }, // Transparent background
-        storeOp: 'store'
-      }]
-    });
-    rp.setPipeline(pipes.render);
-    rp.setBindGroup(0, renderBG);
-    rp.setVertexBuffer(0, buffers.particleBuffer);
-    rp.draw(6, buffers.particleCount);
-    rp.end();
+    const canvasView = context.getCurrentTexture().createView();
+    const hasTrail = params.particleTrail && params.particleTrail > 0.0;
+
+    if (hasTrail) {
+      // Ensure accumulation texture is resized and created
+      if (!particleAccumTex || width !== context.canvas.width || height !== context.canvas.height) {
+        resize(context.canvas.width, context.canvas.height);
+      }
+
+      if (particleAccumView && copyBG) {
+        // 2a. Fade & Render Pass on Accumulation Texture
+        const rp = commandEncoder.beginRenderPass({
+          colorAttachments: [{
+            view: particleAccumView,
+            loadOp: 'load',
+            storeOp: 'store'
+          }]
+        });
+        
+        // Multiply previous frames' particles by decay factor
+        rp.setPipeline(pipes.fade);
+        const decay = params.particleTrail;
+        rp.setBlendConstant([decay, decay, decay, decay]);
+        rp.draw(3);
+
+        // Draw new particles with additive blending
+        rp.setPipeline(pipes.render);
+        rp.setBindGroup(0, renderBG);
+        rp.setVertexBuffer(0, buffers.particleBuffer);
+        const activeCount = Math.min(params.particleCount || 65536, buffers.particleCount);
+        rp.draw(6, activeCount);
+        rp.end();
+
+        // 3a. Copy Pass: Render accumulation texture to canvas swapchain
+        const copyRp = commandEncoder.beginRenderPass({
+          colorAttachments: [{
+            view: canvasView,
+            loadOp: 'clear',
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            storeOp: 'store'
+          }]
+        });
+        copyRp.setPipeline(pipes.copy);
+        copyRp.setBindGroup(0, copyBG);
+        copyRp.draw(3);
+        copyRp.end();
+      }
+    } else {
+      // 2b. Draw directly to canvas (standard rendering, no trails)
+      const rp = commandEncoder.beginRenderPass({
+        colorAttachments: [{
+          view: canvasView,
+          loadOp: 'clear',
+          clearValue: { r: 0, g: 0, b: 0, a: 0 }, // Transparent background
+          storeOp: 'store'
+        }]
+      });
+      rp.setPipeline(pipes.render);
+      rp.setBindGroup(0, renderBG);
+      rp.setVertexBuffer(0, buffers.particleBuffer);
+      const activeCount = Math.min(params.particleCount || 65536, buffers.particleCount);
+      rp.draw(6, activeCount);
+      rp.end();
+    }
 
     device.queue.submit([commandEncoder.finish()]);
   }
@@ -172,6 +297,7 @@ export function useParticles() {
     init,
     render,
     rebind,
+    resize,
     isInitialized,
     error
   };

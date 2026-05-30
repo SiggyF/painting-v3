@@ -21,7 +21,7 @@ const presetsList = ref<any[]>([])
 const mapContainer = ref<HTMLElement | null>(null)
 const sidebarOpen = ref(true)
 const drawingActive = ref(false) // Default to map navigation
-const activeTab = ref('models')
+const activeTab = ref('rendering')
 const currentSourceType = ref<'video' | 'image'>('video')
 const currentVideoSrc = ref('')
 const currentImageSrc = ref('')
@@ -33,27 +33,7 @@ const activePalette = ref<string[]>(['#00A0B0', '#6A4A3C', '#CC333F', '#EB6841',
 const isColorLocked = ref(false)
 const isPersistentSource = ref(true) // New: Sticky paint sources
 let initialQuiversInjected = false
-const activeStampUrl = ref<string | null>(null)
-const activeStampImage = ref<HTMLImageElement | null>(null)
 
-const handleSelectStamp = (url: string) => {
-  activeStampUrl.value = url
-  const img = new Image()
-  img.crossOrigin = 'anonymous'
-  img.onload = () => {
-    activeStampImage.value = img
-    drawingActive.value = true
-    updateMapInteraction(true)
-  }
-  img.src = url
-}
-
-const handleClearStamp = () => {
-  activeStampUrl.value = null
-  activeStampImage.value = null
-  drawingActive.value = false
-  updateMapInteraction(false)
-}
 
 const handleSelectPainting = (url: string) => {
   console.log('Throwing painting in the water:', url)
@@ -256,7 +236,7 @@ const toggleDrawing = () => {
 
 let moveTimeout: any = null
 const lastMousePos = { x: -1, y: -1 }
-const lastStampPos = { x: -1, y: -1 }
+
 
 const drawToPaintCanvas = (nx: number, ny: number) => {
   if (!paintCtx) return
@@ -285,59 +265,11 @@ const drawToPaintCanvas = (nx: number, ny: number) => {
   lastMousePos.y = ny
 }
 
-const stampImageAtMouse = (e: MouseEvent, isMove = false) => {
-  if (!paintCtx || !activeStampImage.value) return
-  const canvas = gpuLayer?.getCanvas()
-  if (!canvas) return
-  const rect = canvas.getBoundingClientRect()
-  const nx = (e.clientX - rect.left) / rect.width
-  const ny = (e.clientY - rect.top) / rect.height
-
-  const w = paintCanvas.width
-  const h = paintCanvas.height
-  
-  const stampWidth = gpuParams.mouseRadius * w * 25
-  const stampHeight = stampWidth * (activeStampImage.value.height / activeStampImage.value.width)
-  
-  if (isMove && lastStampPos.x !== -1) {
-    const dx = (nx - lastStampPos.x) * w
-    const dy = (ny - lastStampPos.y) * h
-    const dist = Math.sqrt(dx * dx + dy * dy)
-    if (dist < stampWidth * 0.4) return
-  }
-
-  const x = nx * w - stampWidth / 2
-  const y = ny * h - stampHeight / 2
-
-  // Colorize stamp with active color using an offscreen canvas
-  const color = `rgb(${activeColor.value[0]*255}, ${activeColor.value[1]*255}, ${activeColor.value[2]*255})`
-  const sw_int = Math.ceil(stampWidth)
-  const sh_int = Math.ceil(stampHeight)
-  const offscreen = document.createElement('canvas')
-  offscreen.width = sw_int
-  offscreen.height = sh_int
-  const octx = offscreen.getContext('2d')
-  if (octx) {
-    octx.drawImage(activeStampImage.value, 0, 0, sw_int, sh_int)
-    octx.globalCompositeOperation = 'source-in'
-    octx.fillStyle = color
-    octx.fillRect(0, 0, sw_int, sh_int)
-  }
-  
-  paintCtx.drawImage(offscreen, x, y, stampWidth, stampHeight)
-  
-  lastStampPos.x = nx
-  lastStampPos.y = ny
-}
-
 const handleMouseDown = (e: MouseEvent) => {
   // Classic drag painting (if mode active)
   if (drawingActive.value) {
     gpuParams.isDrawing = 1.0
     updateMousePosition(e)
-    if (activeStampImage.value) {
-      stampImageAtMouse(e, false)
-    }
   }
 }
 
@@ -352,14 +284,10 @@ const handleMouseMove = (e: MouseEvent) => {
     // Draw to 2D paint canvas
     const canvas = gpuLayer?.getCanvas()
     if (canvas) {
-      if (activeStampImage.value) {
-        stampImageAtMouse(e, true)
-      } else {
-        const rect = canvas.getBoundingClientRect()
-        const nx = (e.clientX - rect.left) / rect.width
-        const ny = (e.clientY - rect.top) / rect.height
-        drawToPaintCanvas(nx, ny)
-      }
+      const rect = canvas.getBoundingClientRect()
+      const nx = (e.clientX - rect.left) / rect.width
+      const ny = (e.clientY - rect.top) / rect.height
+      drawToPaintCanvas(nx, ny)
     }
     
     // For seamless (Shift-move / Hold-button), stop painting when movement stops
@@ -370,18 +298,15 @@ const handleMouseMove = (e: MouseEvent) => {
           gpuParams.isDrawing = 0.0
           lastMousePos.x = -1
           lastMousePos.y = -1
-          lastStampPos.x = -1
-          lastStampPos.y = -1
         }
       }, 50)
     }
   } else {
     lastMousePos.x = -1
     lastMousePos.y = -1
-    lastStampPos.x = -1
-    lastStampPos.y = -1
   }
 }
+
 
 const updateMousePosition = (e: MouseEvent) => {
   const canvas = gpuLayer?.getCanvas()
@@ -408,9 +333,8 @@ const handleMouseUp = () => {
   gpuParams.mouseX = -1.0
   lastMousePos.x = -1
   lastMousePos.y = -1
-  lastStampPos.x = -1
-  lastStampPos.y = -1
 }
+
 
 const getSourceUrl = (src: string) => {
   if (!src) return ''
@@ -500,8 +424,21 @@ const gpuParams = reactive<GPUParams>({
   decay: 0.98,
   viscosity: 0.0,
   scheme: 0.0,
-  analytical: 0.0
+  analytical: 0.0,
+  particleSize: 0.003,
+  particleOpacity: 0.25,
+  particleCount: 512,
+  particleTrail: 0.92,
+  particleColorMode: 0.0,
+  particleColorR: 1.0,
+  particleColorG: 1.0,
+  particleColorB: 1.0,
+  particleColormapId: 0.0
 })
+
+
+
+
 
 let gpuLayer: WebGPULayer | null = null
 let particleLayer: WebGPULayer | null = null
@@ -691,6 +628,7 @@ onMounted(() => {
         pCanvas.width = e.width
         pCanvas.height = e.height
       }
+      particles.resize(e.width, e.height)
     })
   }
 })
@@ -881,13 +819,12 @@ onUnmounted(() => {
               @select-model="handleModelSelect"
               @inject-pattern="injectPattern"
               @select-painting="handleSelectPainting"
-              @select-stamp="handleSelectStamp"
-              @clear-stamp="handleClearStamp"
               @predictor-change="onPredictorChange"
               @corrector-change="onCorrectorChange"
               @select-color="(c) => { updateActiveColor(c); isColorLocked = true }"
               @select-palette="(p) => { activePalette = p; isColorLocked = false }"
             />
+
           </transition>
         </div>
       </div>

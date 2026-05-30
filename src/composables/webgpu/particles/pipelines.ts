@@ -1,8 +1,11 @@
 export interface ParticlePipelines {
   compute: GPUComputePipeline;
   render: GPURenderPipeline;
+  fade: GPURenderPipeline;
+  copy: GPURenderPipeline;
   computeBindGroupLayout: GPUBindGroupLayout;
   renderBindGroupLayout: GPUBindGroupLayout;
+  copyBindGroupLayout: GPUBindGroupLayout;
 }
 
 export function createParticlePipelines(
@@ -66,8 +69,26 @@ export function createParticlePipelines(
     entries: [
       {
         binding: 1,
-        visibility: GPUShaderStage.VERTEX,
+        visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
         buffer: { type: 'uniform' }
+      }
+    ]
+  });
+
+
+  // Explicit bind group layout for copy stage (sampling the accumulation texture)
+  const copyBindGroupLayout = device.createBindGroupLayout({
+    label: 'Particle Copy Bind Group Layout',
+    entries: [
+      {
+        binding: 0,
+        visibility: GPUShaderStage.FRAGMENT,
+        texture: { sampleType: 'float' }
+      },
+      {
+        binding: 1,
+        visibility: GPUShaderStage.FRAGMENT,
+        sampler: { type: 'filtering' }
       }
     ]
   });
@@ -80,6 +101,16 @@ export function createParticlePipelines(
   const renderPipelineLayout = device.createPipelineLayout({
     label: 'Particle Render Pipeline Layout',
     bindGroupLayouts: [renderBindGroupLayout]
+  });
+
+  const fadePipelineLayout = device.createPipelineLayout({
+    label: 'Particle Fade Pipeline Layout',
+    bindGroupLayouts: []
+  });
+
+  const copyPipelineLayout = device.createPipelineLayout({
+    label: 'Particle Copy Pipeline Layout',
+    bindGroupLayouts: [copyBindGroupLayout]
   });
 
   const compute = device.createComputePipeline({
@@ -106,12 +137,46 @@ export function createParticlePipelines(
           blend: {
             color: {
               srcFactor: 'one',
-              dstFactor: 'one',
+              dstFactor: 'one-minus-src-alpha',
               operation: 'add',
             },
             alpha: {
               srcFactor: 'one',
-              dstFactor: 'one',
+              dstFactor: 'one-minus-src-alpha',
+              operation: 'add',
+            },
+          },
+
+        },
+      ],
+    },
+    primitive: {
+      topology: 'triangle-list',
+    },
+  });
+
+  const fade = device.createRenderPipeline({
+    layout: fadePipelineLayout,
+    vertex: {
+      module: shaderModule,
+      entryPoint: 'screen_vertex_main',
+      buffers: [],
+    },
+    fragment: {
+      module: shaderModule,
+      entryPoint: 'fade_fragment_main',
+      targets: [
+        {
+          format,
+          blend: {
+            color: {
+              srcFactor: 'zero',
+              dstFactor: 'constant',
+              operation: 'add',
+            },
+            alpha: {
+              srcFactor: 'zero',
+              dstFactor: 'constant',
               operation: 'add',
             },
           },
@@ -123,5 +188,35 @@ export function createParticlePipelines(
     },
   });
 
-  return { compute, render, computeBindGroupLayout, renderBindGroupLayout };
+  const copy = device.createRenderPipeline({
+    layout: copyPipelineLayout,
+    vertex: {
+      module: shaderModule,
+      entryPoint: 'screen_vertex_main',
+      buffers: [],
+    },
+    fragment: {
+      module: shaderModule,
+      entryPoint: 'screen_fragment_main',
+      targets: [
+        {
+          format,
+        },
+      ],
+    },
+    primitive: {
+      topology: 'triangle-list',
+    },
+  });
+
+  return { 
+    compute, 
+    render, 
+    fade, 
+    copy, 
+    computeBindGroupLayout, 
+    renderBindGroupLayout, 
+    copyBindGroupLayout 
+  };
 }
+

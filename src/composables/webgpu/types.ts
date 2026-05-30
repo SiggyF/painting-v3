@@ -17,4 +17,16 @@ export interface GPUParams {
   viscosity: number;
   scheme: number;
   analytical: number;
+  particleSize?: number;
+  particleOpacity?: number;
+  particleCount?: number;
+  particleTrail?: number;
+  particleColorMode?: number;
+  particleColorR?: number;
+  particleColorG?: number;
+  particleColorB?: number;
+  particleColormapId?: number;
 }
+
+
+
