@@ -2,7 +2,15 @@
 import { ref, onMounted, reactive, onUnmounted, computed } from 'vue'
 import L from 'leaflet'
 import { WebGPULayer } from './utils/WebGPULayer'
-import { useWebGPU, type GPUParams } from './composables/useWebGPU'
+import { useWebGPU } from './composables/useWebGPU'
+import type { GPUParams } from './composables/webgpu/types'
+import { buildCustomAdvectCode } from './composables/webgpu/schemes'
+
+const selectedPredictorId = ref('bilinear')
+const selectedCorrectorId = ref('none')
+const allPredictors = ref<any[]>([])
+const allCorrectors = ref<any[]>([])
+const presetsList = ref<any[]>([])
 import ModelsOverview from './components/ModelsOverview.vue'
 import ColorSelection from './components/ColorSelection.vue'
 import DrawingShortcuts from './components/DrawingShortcuts.vue'
@@ -18,8 +26,6 @@ const currentImageSrc = ref('')
 const modelsList = ref<any[]>([])
 const selectedModel = ref<any>(null)
 const isShiftPressed = ref(false)
-const isQPressed = ref(true)
-const isGPressed = ref(false)
 const isHoldActive = ref(false)
 const activePalette = ref<string[]>(['#00A0B0', '#6A4A3C', '#CC333F', '#EB6841', '#EDC951'])
 const isColorLocked = ref(false)
@@ -80,7 +86,38 @@ const handleSelectPainting = (url: string) => {
   img.src = url
 }
 
-const { init, render, resize, updateUVTexture, updatePaintTexture, clearTextures, clearSource, updateActiveColor, activeColor, loadPaintCanvasToSimulation, getStats } = useWebGPU()
+const { init, render, resize, updateUVTexture, updatePaintTexture, clearTextures, clearSource, updateActiveColor, activeColor, loadPaintCanvasToSimulation, getStats, compileAdvectPipeline } = useWebGPU()
+
+const filteredCorrectors = computed(() => {
+  return allCorrectors.value.filter(c => c.compatiblePredictors.includes(selectedPredictorId.value))
+})
+
+const updateSimulationScheme = async () => {
+  const pred = selectedPredictorId.value
+  const corr = selectedCorrectorId.value
+  const code = buildCustomAdvectCode(pred, corr)
+
+  // Find corresponding preset to set schemeId (which controls sub-stepping on GPU)
+  const preset = presetsList.value.find(p => p.predictor === pred && p.corrector === corr)
+  gpuParams.scheme = preset ? preset.schemeId : 1.0
+
+  const res = await compileAdvectPipeline(code)
+  if (!res.success) {
+    console.error('Error compiling scheme pipeline:', res.messages.join('\n'))
+  }
+}
+
+const onPredictorChange = () => {
+  const isCompatible = filteredCorrectors.value.some(c => c.id === selectedCorrectorId.value)
+  if (!isCompatible) {
+    selectedCorrectorId.value = 'none'
+  }
+  updateSimulationScheme()
+}
+
+const onCorrectorChange = () => {
+  updateSimulationScheme()
+}
 
 const videoElement = ref<HTMLVideoElement | null>(null)
 const imageElement = ref<HTMLImageElement | null>(null)
@@ -94,9 +131,22 @@ let timeInterval: any = null
 
 const videoProgress = ref(0) // Reactive progress for clock sync
 
-// Initialize active color to match Ocean Five default
-onMounted(() => {
+// Initialize active color and load schemes catalog
+onMounted(async () => {
   updateActiveColor('#00A0B0')
+  try {
+    const response = await fetch(`${import.meta.env.BASE_URL}data/schemes.json`)
+    const data = await response.json()
+    allPredictors.value = data.predictors || []
+    allCorrectors.value = data.correctors || []
+    presetsList.value = data.presets || []
+    
+    // Set initial values
+    selectedPredictorId.value = 'bilinear'
+    selectedCorrectorId.value = 'none'
+  } catch (err) {
+    console.error('Error loading schemes catalog:', err)
+  }
 })
 
 const modelTime = computed(() => {
@@ -137,12 +187,14 @@ const addGrid = () => {
   const step = w / 16
   paintCtx.strokeStyle = 'white'
   paintCtx.lineWidth = 0.8
+  paintCtx.beginPath()
   for (let x = 0; x <= w; x += step) {
-    paintCtx.beginPath(); paintCtx.moveTo(x, 0); paintCtx.lineTo(x, h); paintCtx.stroke()
+    paintCtx.moveTo(x, 0); paintCtx.lineTo(x, h)
   }
   for (let y = 0; y <= h; y += step) {
-    paintCtx.beginPath(); paintCtx.moveTo(0, y); paintCtx.lineTo(w, y); paintCtx.stroke()
+    paintCtx.moveTo(0, y); paintCtx.lineTo(w, y)
   }
+  paintCtx.stroke()
 }
 
 const addQuivers = () => {
@@ -411,13 +463,14 @@ const gpuParams = reactive<GPUParams>({
   blend: 0.0,
   time: 0.0,
   aspect: 1.0,
+  noiseScale: 64.0,
   scale: 16.0,
   mouseX: -1.0,
   mouseY: -1.0,
   isDrawing: 0.0,
   mouseDirX: 0.0,
   mouseDirY: 0.0,
-  uvScale: 1.6, // Slowed down by ~5x (from 8.0)
+  uvScale: 1.6,
   flipv: 1.0,
   mouseRadius: 0.005,
   decay: 0.98,
@@ -439,10 +492,10 @@ const updateMainStats = () => {
   if (isFetchingStats) return
   isFetchingStats = true
 
-  getStats().then(statsData => {
+  getStats().then((statsData: Uint32Array | null) => {
     if (statsData) {
       const mass = statsData[0] / 1000.0
-      const peak = statsData[12] / 1000.0
+      const peak = statsData[13] / 1000.0
       
       if (mass > maxMass) maxMass = mass
       if (peak > maxPeak) maxPeak = peak
@@ -620,14 +673,14 @@ function startLoop() {
 
     if (currentSourceType.value === 'video' && videoElement.value && videoElement.value.readyState >= 2) {
       if (videoElement.value.paused) videoElement.value.play().catch(() => {})
-      updateUVTexture(videoElement.value)
+      updateUVTexture(videoElement.value, gpuParams.flipv > 0.5)
       
       // Update reactive progress for clock
       if (videoElement.value.duration > 0) {
         videoProgress.value = videoElement.value.currentTime / videoElement.value.duration
       }
     } else if (currentSourceType.value === 'image' && imageElement.value && imageElement.value.complete) {
-      updateUVTexture(imageElement.value)
+      updateUVTexture(imageElement.value, gpuParams.flipv > 0.5)
       videoProgress.value = (gpuParams.time % 10.0) / 10.0 // Loop dummy progress for static images
     }
 
@@ -828,6 +881,36 @@ onUnmounted(() => {
                           Add Quivers
                        </button>
                     </div>                  </div>
+
+                  <div>
+                    <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Numerical Scheme</h2>
+                    <div class="glass-panel p-3 rounded-xl bg-white/5 border border-white/5 group hover:border-sky-500/30 transition-all space-y-3">
+                      <div>
+                        <span class="text-[8px] font-bold text-slate-500 uppercase">Predictor</span>
+                        <select 
+                          v-model="selectedPredictorId" 
+                          @change="onPredictorChange"
+                          class="w-full bg-slate-900/80 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 transition-all cursor-pointer mt-1"
+                        >
+                          <option v-for="pred in allPredictors" :key="pred.id" :value="pred.id">
+                            {{ pred.name }}
+                          </option>
+                        </select>
+                      </div>
+                      <div>
+                        <span class="text-[8px] font-bold text-slate-500 uppercase">Corrector</span>
+                        <select 
+                          v-model="selectedCorrectorId" 
+                          @change="onCorrectorChange"
+                          class="w-full bg-slate-900/80 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 transition-all cursor-pointer mt-1"
+                        >
+                          <option v-for="corr in filteredCorrectors" :key="corr.id" :value="corr.id">
+                            {{ corr.name }}
+                          </option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
 
                   <div>
                     <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Source Persistence</h2>
