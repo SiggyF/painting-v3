@@ -8,10 +8,9 @@ export function createParticlePipelines(
   shaderModule: GPUShaderModule,
   format: GPUTextureFormat
 ): ParticlePipelines {
-  // We use a vertex buffer to pass particle data to the render pipeline
   const vertexBufferLayout: GPUVertexBufferLayout = {
     arrayStride: 32, // 32 bytes per particle
-    stepMode: 'instance',
+    stepMode: 'vertex',
     attributes: [
       {
         shaderLocation: 0,

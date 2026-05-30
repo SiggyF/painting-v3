@@ -76,7 +76,6 @@ fn compute_main(@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>) {
 // Render Pipeline
 struct VertexOutput {
   @builtin(position) position: vec4<f32>,
-  @builtin(point_size) size: f32,
   @location(0) vel: vec2<f32>,
   @location(1) life: f32,
 };
@@ -97,7 +96,6 @@ fn vertex_main(
   let ndc_y = 1.0 - pos.y * 2.0;
 
   output.position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
-  output.size = 3.0; // Point size
   output.vel = vel;
   output.life = life;
   return output;
