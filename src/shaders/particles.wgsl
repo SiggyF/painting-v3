@@ -265,8 +265,7 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
   }
 
   // Sharp anti-aliased circular particles to prevent trail bloating
-  let intensity = smoothstep(1.0, 0.8, r);
-
+  let intensity = 1.0 - smoothstep(0.8, 1.0, r);
 
   let speed = length(in.vel);
   var color: vec3<f32>;
