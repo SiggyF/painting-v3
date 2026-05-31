@@ -26,6 +26,17 @@ export interface GPUParams {
   particleColorG?: number;
   particleColorB?: number;
   particleColormapId?: number;
+  channelU?: number;
+  channelV?: number;
+  channelMask?: number;
+  channelWater?: number;
+  waterLevelMin?: number;
+  waterLevelMax?: number;
+  waterLevelOpacity?: number;
+  waterLevelEnabled?: boolean;
+  waterLevelContours?: boolean;
+  paintingEnabled?: boolean;
+  particlesEnabled?: boolean;
 }
 
 

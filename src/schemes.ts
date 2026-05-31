@@ -161,7 +161,7 @@ function updatePlayPauseUI() {
 const gpuParamsA = {
   speed: 0.16, blend: 0.0, time: 0.0, aspect: 1.0, noiseScale: 64.0, scale: 16.0,
   mouseX: -1.0, mouseY: -1.0, isDrawing: 0.0, mouseDirX: 0.0, mouseDirY: 0.0,
-  uvScale: 1.6, flipv: 1.0, mouseRadius: 0.005, decay: 1.0, viscosity: 0.0,
+  uvScale: 1.6, flipv: 1.0, mouseRadius: 0.005, decay: 0.998, viscosity: 0.0,
   scheme: 0.0, // Left canvas is Bilinear
   analytical: 1.0 // Default to analytical circular vortex active
 };
@@ -169,7 +169,7 @@ const gpuParamsA = {
 const gpuParamsB = {
   speed: 0.16, blend: 0.0, time: 0.0, aspect: 1.0, noiseScale: 64.0, scale: 16.0,
   mouseX: -1.0, mouseY: -1.0, isDrawing: 0.0, mouseDirX: 0.0, mouseDirY: 0.0,
-  uvScale: 1.6, flipv: 1.0, mouseRadius: 0.005, decay: 1.0, viscosity: 0.0,
+  uvScale: 1.6, flipv: 1.0, mouseRadius: 0.005, decay: 0.998, viscosity: 0.0,
   scheme: 1.0, // Right canvas uses pluggable custom solver
   analytical: 1.0
 };
@@ -177,6 +177,7 @@ const gpuParamsB = {
 let currentSourceType = 'video';
 let isPersistentSource = false;
 let modelsList: any[] = [];
+let currentModel: any = null;
 let schemeData: {
   predictors: any[];
   correctors: any[];
@@ -218,14 +219,13 @@ function resetMassStats() {
   if (diffusLabelB) diffusLabelB.textContent = `Diffus: 0.0%`;
 }
 
-// Mirror quivers injection
 function addQuivers() {
   resetMassStats();
   const w = paintCanvas.width;
   const h = paintCanvas.height;
   const radius = 3.0; // Increased radius (2x bigger than 1.5)
   paintCtx.fillStyle = '#ffffff';
-  for (let i = 0; i < 200; i++) {
+  for (let i = 0; i < 1000; i++) {
     const x = Math.random() * w;
     const y = Math.random() * h;
     paintCtx.beginPath();
@@ -561,6 +561,10 @@ function loop() {
 
   if (currentSourceType === 'video' && videoElement.readyState >= 2) {
     if (videoElement.paused) videoElement.play().catch(() => {});
+    const targetRate = currentModel?.uv?.playback_rate ?? currentModel?.playback_rate ?? 1.0;
+    if (videoElement.playbackRate !== targetRate) {
+      videoElement.playbackRate = targetRate;
+    }
     simA.updateUVTexture(videoElement, gpuParamsA.flipv > 0.5);
     simB.updateUVTexture(videoElement, gpuParamsB.flipv > 0.5);
   } else if (currentSourceType === 'image' && imageElement.complete) {
@@ -619,6 +623,7 @@ async function initModels() {
 }
 
 function loadModel(model: any) {
+  currentModel = model;
   simA.clearTextures();
   simA.clearSource();
   simB.clearTextures();

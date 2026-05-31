@@ -6,6 +6,7 @@ import DrawingShortcuts from './DrawingShortcuts.vue'
 
 interface Props {
   modelsList: any[]
+  selectedModel: any
   allPredictors: any[]
   allCorrectors: any[]
   selectedPredictorId: string
@@ -47,6 +48,10 @@ const localSelectedCorrectorId = computed({
 const localIsPersistentSource = computed({
   get: () => props.isPersistentSource,
   set: (val) => emit('update:isPersistentSource', val)
+})
+
+const hasWaterLevelData = computed(() => {
+  return props.gpuParams.channelWater !== undefined && props.gpuParams.channelWater >= 0
 })
 
 const localActiveTab = computed({
@@ -115,6 +120,49 @@ const particleConstantColorHex = computed({
         <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-2">Available Domains</h2>
         <ModelsOverview :models="modelsList" @select="(m) => emit('select-model', m)" />
 
+        <!-- Domain Details inside models tab -->
+        <div v-if="selectedModel" class="mt-4 pt-4 border-t border-white/5 space-y-4">
+          <h3 class="text-[10px] font-bold uppercase text-sky-400 tracking-widest flex items-center gap-2">
+            <span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+            Domain Information
+          </h3>
+          
+          <div class="space-y-3">
+            <div>
+               <h4 class="text-xs font-semibold text-slate-200">{{ selectedModel.title }}</h4>
+               <p class="text-[11px] text-slate-400 leading-relaxed mt-1">{{ selectedModel.abstract || 'No description available' }}</p>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-2 pt-1 text-[9px] uppercase text-slate-500">
+               <div>
+                  <span class="block text-slate-600">Start Time</span>
+                  <span class="text-slate-300 font-mono text-[9px]" v-if="selectedModel.extent?.time">
+                    {{ new Date(selectedModel.extent.time[0]).toUTCString().split(' ').slice(1, 5).join(' ') }} UTC
+                  </span>
+                  <span class="text-slate-300 font-mono text-[9px]" v-else>N/A</span>
+               </div>
+               <div>
+                  <span class="block text-slate-600">End Time</span>
+                  <span class="text-slate-300 font-mono text-[9px]" v-if="selectedModel.extent?.time">
+                    {{ new Date(selectedModel.extent.time[1]).toUTCString().split(' ').slice(1, 5).join(' ') }} UTC
+                  </span>
+                  <span class="text-slate-300 font-mono text-[9px]" v-else>N/A</span>
+               </div>
+            </div>
+
+            <div class="pt-2 border-t border-white/5 space-y-1.5">
+              <div class="flex justify-between text-[9px] uppercase text-slate-500">
+                 <span>Domain Engine</span>
+                 <span class="text-slate-300 font-semibold">{{ selectedModel.engine || 'WebGPU' }}</span>
+              </div>
+              <div class="flex justify-between text-[9px] uppercase text-slate-500">
+                 <span>Active Particles</span>
+                 <span class="text-sky-400 font-mono">{{ gpuParams.particleCount > 0 ? (gpuParams.particleCount / 1000).toFixed(1) + 'K' : 'None' }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Flow Source Debug Section -->
         <div class="mt-6 pt-4 border-t border-white/5">
           <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-3">Flow Source Debug</h2>
@@ -151,8 +199,45 @@ const particleConstantColorHex = computed({
       </div>
 
       <div v-if="localActiveTab === 'rendering'" class="space-y-6">
-        <!-- 1. Paint Controls (Sticky, add grid, add quiver, decay) -->
+        <!-- Layer Visibility Controls -->
         <div>
+          <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-3">Layer Visibility</h2>
+          <div class="grid grid-cols-3 gap-2">
+            <!-- Painting Layer Toggle -->
+            <button 
+              @click="gpuParams.paintingEnabled = !gpuParams.paintingEnabled" 
+              class="glass-panel py-2.5 rounded-xl border transition-all text-[10px] font-bold uppercase tracking-wider flex flex-col items-center gap-1.5 cursor-pointer"
+              :class="gpuParams.paintingEnabled ? 'bg-sky-500/20 border-sky-500/50 text-sky-400' : 'bg-white/5 border-white/5 text-slate-500 hover:text-slate-300'"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 2 12 22Z"/><path d="M12 18C15.3137 18 18 15.3137 18 12C18 8.68629 15.3137 6 12 6C8.68629 6 6 8.68629 6 12C6 15.3137 8.68629 18 12 18Z"/></svg>
+              <span>Painting</span>
+            </button>
+
+            <!-- Water Level Layer Toggle -->
+            <button 
+              @click="gpuParams.waterLevelEnabled = !gpuParams.waterLevelEnabled" 
+              :disabled="!hasWaterLevelData"
+              class="glass-panel py-2.5 rounded-xl border transition-all text-[10px] font-bold uppercase tracking-wider flex flex-col items-center gap-1.5 cursor-pointer disabled:opacity-30 disabled:pointer-events-none"
+              :class="gpuParams.waterLevelEnabled && hasWaterLevelData ? 'bg-sky-500/20 border-sky-500/50 text-sky-400' : 'bg-white/5 border-white/5 text-slate-500 hover:text-slate-300'"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <span>Water Level</span>
+            </button>
+
+            <!-- Particles Layer Toggle -->
+            <button 
+              @click="gpuParams.particlesEnabled = !gpuParams.particlesEnabled" 
+              class="glass-panel py-2.5 rounded-xl border transition-all text-[10px] font-bold uppercase tracking-wider flex flex-col items-center gap-1.5 cursor-pointer"
+              :class="gpuParams.particlesEnabled ? 'bg-sky-500/20 border-sky-500/50 text-sky-400' : 'bg-white/5 border-white/5 text-slate-500 hover:text-slate-300'"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+              <span>Particles</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 1. Paint Controls (Sticky, add grid, add quiver, decay) -->
+        <div class="pt-4 border-t border-white/5">
           <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Paint Controls</h2>
           <div class="space-y-4">
             <!-- Sticky Paint Sources -->
@@ -188,6 +273,37 @@ const particleConstantColorHex = computed({
                 type="range" 
                 v-model.number="gpuParams.decay" 
                 min="0.95" max="1.0" step="0.001"
+                class="w-full"
+              >
+            </div>
+          </div>
+        </div>
+
+        <!-- Water Level Controls -->
+        <div v-if="hasWaterLevelData" class="pt-4 border-t border-white/5">
+          <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Water Level Settings</h2>
+          <div class="space-y-4">
+            <!-- Contour Lines Checkbox -->
+            <div class="flex items-center justify-between glass-panel p-3 rounded-xl bg-white/5 border border-white/5 group hover:border-sky-500/30 transition-all cursor-pointer" @click="gpuParams.waterLevelContours = !gpuParams.waterLevelContours">
+               <div>
+                  <p class="text-xs font-semibold text-slate-200">Show Contour Lines</p>
+                  <p class="text-[8px] text-slate-500 uppercase tracking-tighter">Render elevation height contour lines</p>
+               </div>
+               <div class="w-10 h-5 rounded-full bg-slate-800 relative transition-colors" :class="gpuParams.waterLevelContours ? 'bg-sky-500/40' : ''">
+                  <div class="absolute top-1 left-1 w-3 h-3 rounded-full bg-slate-400 transition-all" :class="gpuParams.waterLevelContours ? 'left-6 bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.8)]' : ''"></div>
+               </div>
+            </div>
+
+            <!-- Water Level Opacity -->
+            <div v-if="gpuParams.waterLevelEnabled">
+              <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
+                <span>Water Level Opacity</span>
+                <span class="text-sky-400">{{ (gpuParams.waterLevelOpacity * 100).toFixed(0) }}%</span>
+              </div>
+              <input 
+                type="range" 
+                v-model.number="gpuParams.waterLevelOpacity" 
+                min="0.0" max="1.0" step="0.05"
                 class="w-full"
               >
             </div>

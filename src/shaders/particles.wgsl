@@ -21,7 +21,21 @@ struct Uniforms {
   particleColorG: f32,
   particleColorB: f32,
   particleColormapId: f32,
+  channelU: f32,
+  channelV: f32,
+  channelMask: f32,
+  channelWater: f32,
+  pad1: f32,
+  pad2: f32,
+  pad3: f32,
 };
+
+fn get_channel_value(color: vec4<f32>, channel_idx: f32) -> f32 {
+  if (channel_idx < 0.5) { return color.r; }
+  if (channel_idx < 1.5) { return color.g; }
+  if (channel_idx < 2.5) { return color.b; }
+  return color.a;
+}
 
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
@@ -29,11 +43,17 @@ struct Uniforms {
 @group(0) @binding(2) var uvTex: texture_2d<f32>;
 @group(0) @binding(3) var uvSampler: sampler;
 
-// Hash function for random number generation
-fn hash12(p: vec2<f32>) -> f32 {
-  let q = fract(p * vec2<f32>(12.9898, 78.233));
-  return fract(q.x * q.y * 43758.5453);
+// Thomas Wang's 32-bit integer hash function
+fn hash_u32(x: u32) -> u32 {
+  var a = x;
+  a = (a ^ 61u) ^ (a >> 16u);
+  a = a + (a << 3u);
+  a = a ^ (a >> 4u);
+  a = a * 0x27d4eb2du;
+  a = a ^ (a >> 15u);
+  return a;
 }
+
 
 @compute @workgroup_size(64)
 fn compute_main(@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>) {
@@ -45,7 +65,9 @@ fn compute_main(@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>) {
   var p = particles[index];
 
   // Particle life logic
-  p.life -= uniforms.dt * 0.5; // Arbitrary life span decay
+  // Use a randomized decay scale based on particle index to prevent cohort synchronization (breathing)
+  let decay_scale = 0.5 + 1.0 * (f32(hash_u32(index)) / 4294967295.0);
+  p.life -= uniforms.dt * 0.5 * decay_scale; // Arbitrary life span decay
   
   // Sample UV video for velocity and mask
   var uv = p.pos;
@@ -54,19 +76,36 @@ fn compute_main(@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>) {
   
   let vel_raw = textureSampleLevel(uvTex, uvSampler, uv, 0.0);
   
-  // Safety: Detect if texture data is NaN or Infinity
-  var mask = vel_raw.z;
-  if (mask != mask || mask > 10.0) { mask = 0.0; }
+  let raw_mask = get_channel_value(vel_raw, uniforms.channelMask);
+  var is_land = 0.0;
+  if (uniforms.channelMask > 2.5) {
+    // Mask in Alpha: 1.0 is water, 0.0 is land
+    is_land = 1.0 - raw_mask;
+  } else {
+    // Mask in Blue: 0.0 is water, 1.0 is land
+    is_land = raw_mask;
+  }
 
-  if (p.life <= 0.0 || mask > 0.01) {
-    // Respawn particle randomly
-    let r1 = hash12(vec2<f32>(f32(index), uniforms.time));
-    let r2 = hash12(vec2<f32>(uniforms.time, f32(index)));
+  // Safety: Detect if mask is NaN or Infinity
+  if (is_land != is_land || is_land > 10.0) { is_land = 1.0; }
+
+  if (p.life <= 0.0 || is_land > 0.5) {
+    // Respawn particle randomly using Wang hash (prevents float aliasing columns)
+    let t_seed = u32(abs(uniforms.time * 1000.0)) & 0xFFFFu;
+    let seed_x = index + t_seed * 1024u + 12345u;
+    let seed_y = index * 33u + t_seed * 65536u + 67890u;
+    
+    let r1 = f32(hash_u32(seed_x)) / 4294967295.0;
+    let r2 = f32(hash_u32(seed_y)) / 4294967295.0;
+    
     p.pos = vec2<f32>(r1, r2);
     p.life = 1.0;
     p.vel = vec2<f32>(0.0, 0.0);
   } else {
-    var v_raw = vel_raw.xy;
+    var v_raw = vec2<f32>(
+      get_channel_value(vel_raw, uniforms.channelU),
+      get_channel_value(vel_raw, uniforms.channelV)
+    );
     // Safety: If texture sample is NaN, default to zero
     if (any(v_raw != v_raw)) { v_raw = vec2<f32>(0.5, 0.5); }
 

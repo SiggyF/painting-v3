@@ -2,7 +2,7 @@
 import { ref, onMounted, reactive, onUnmounted, computed } from 'vue'
 import L from 'leaflet'
 import { WebGPULayer } from './utils/WebGPULayer'
-import { initWebGPU, useSharedResources, useFlow, useParticles } from './composables/useWebGPU'
+import { initWebGPU, useSharedResources, useFlow, useParticles, useWaterLevel } from './composables/useWebGPU'
 import type { GPUCore } from './composables/useWebGPU'
 import type { GPUParams } from './composables/webgpu/types'
 import { buildCustomAdvectCode } from './composables/webgpu/flow/schemes'
@@ -10,7 +10,6 @@ import { buildCustomAdvectCode } from './composables/webgpu/flow/schemes'
 import ClockWidget from './components/ClockWidget.vue'
 import InstructionCard from './components/InstructionCard.vue'
 import SidebarSettings from './components/SidebarSettings.vue'
-import DomainDetails from './components/DomainDetails.vue'
 
 const selectedPredictorId = ref('bicubic')
 const selectedCorrectorId = ref('none')
@@ -70,6 +69,7 @@ const handleSelectPainting = (url: string) => {
 
 const flow = useFlow()
 const particles = useParticles()
+const waterLevel = useWaterLevel()
 let core: GPUCore | null = null
 let sharedResources: ReturnType<typeof useSharedResources> | null = null
 
@@ -98,7 +98,7 @@ const handleMapClick = async (e: any) => {
     const point = leafletMap!.latLngToContainerPoint(latlng)
     
     // Convert container pixels to simulation pixels (accounting for DPR and potential scaling)
-    const canvas = gpuLayer.getCanvas()
+    const canvas = gpuLayer?.getCanvas()
     if (!canvas) return
     
     const rect = canvas.getBoundingClientRect()
@@ -229,7 +229,7 @@ const addQuivers = () => {
   // Reduced radius (now 3.0, 2x bigger than 1.5)
   const radius = 3.0 
   paintCtx.fillStyle = 'white'
-  for (let i = 0; i < 200; i++) {
+  for (let i = 0; i < 1000; i++) {
     const x = Math.random() * w
     const y = Math.random() * h
     paintCtx.beginPath()
@@ -382,10 +382,23 @@ const getSourceUrl = (src: string) => {
   if (!src) return ''
   const cleanSrc = src.startsWith('/') ? src.slice(1) : src
   const path = `${import.meta.env.BASE_URL}${cleanSrc}`
-  if (path.endsWith('.webm')) {
-    return path.replace('.webm', '.mp4')
-  }
+     // if (path.endsWith('.webm')) {
+     //   return path.replace('.webm', '.mp4')
+     // }
   return path
+}
+
+const getChannelIndex = (channels: any, quantity: string, defaultIdx: number): number => {
+  if (!channels) return defaultIdx
+  for (const [chan, quant] of Object.entries(channels)) {
+    if (quant === quantity) {
+      if (chan === 'r') return 0
+      if (chan === 'g') return 1
+      if (chan === 'b') return 2
+      if (chan === 'a') return 3
+    }
+  }
+  return defaultIdx
 }
 
 const handleModelSelect = (model: any) => {
@@ -428,13 +441,30 @@ const handleModelSelect = (model: any) => {
     }
   }
 
-  if (gpuLayer && particleLayer && model.extent?.sw && model.extent?.ne) {
+  if (gpuLayer && particleLayer && waterLevelLayer && model.extent?.sw && model.extent?.ne) {
     const sw = L.latLng(model.extent.sw[0], model.extent.sw[1])
     const ne = L.latLng(model.extent.ne[0], model.extent.ne[1])
     const bounds = L.latLngBounds(sw, ne)
     gpuLayer.setBounds(bounds)
     particleLayer.setBounds(bounds)
+    waterLevelLayer.setBounds(bounds)
   }
+
+  const channels = model.uv?.channels
+  gpuParams.channelU = getChannelIndex(channels, 'u', 0)
+  gpuParams.channelV = getChannelIndex(channels, 'v', 1)
+  gpuParams.channelMask = getChannelIndex(channels, 'mask', 2)
+  gpuParams.channelWater = getChannelIndex(channels, 'waterlevel', -1)
+
+  if (model.extent?.waterlevel && Array.isArray(model.extent.waterlevel)) {
+    gpuParams.waterLevelMin = model.extent.waterlevel[0]
+    gpuParams.waterLevelMax = model.extent.waterlevel[1]
+  } else {
+    gpuParams.waterLevelMin = 0.0
+    gpuParams.waterLevelMax = 1.0
+  }
+  // Enable water level layer by default if the model provides water level data
+  gpuParams.waterLevelEnabled = gpuParams.channelWater >= 0
 
   const tag = model.uv?.tag || 'video'
   if (tag === 'img' || tag === 'image') {
@@ -463,25 +493,37 @@ const gpuParams = reactive<GPUParams>({
   uvScale: 1.6,
   flipv: 1.0,
   mouseRadius: 0.002,
-  decay: 0.98,
+  decay: 0.998,
   viscosity: 0.0,
   scheme: 0.0,
   analytical: 0.0,
-  particleSize: 0.003,
-  particleOpacity: 0.25,
-  particleCount: 512,
-  particleTrail: 0.92,
-  particleColorMode: 0.0,
-  particleColorR: 1.0,
-  particleColorG: 1.0,
-  particleColorB: 1.0,
-  particleColormapId: 0.0
+  particleSize: 0.0015,
+  particleOpacity: 0.15,
+  particleCount: 65536,
+  particleTrail: 0.01,
+  particleColorMode: 2.0,
+  particleColorR: 110 / 255,
+  particleColorG: 212 / 255,
+  particleColorB: 210 / 255,
+  particleColormapId: 0.0,
+  channelU: 0,
+  channelV: 1,
+  channelMask: 2,
+  channelWater: -1,
+  waterLevelMin: 0.0,
+  waterLevelMax: 1.0,
+  waterLevelOpacity: 0.6,
+  waterLevelEnabled: false,
+  waterLevelContours: false,
+  paintingEnabled: true,
+  particlesEnabled: true
 })
 
 
 
 
 
+let waterLevelLayer: WebGPULayer | null = null
 let gpuLayer: WebGPULayer | null = null
 let particleLayer: WebGPULayer | null = null
 let animationFrameId: number | null = null
@@ -552,6 +594,9 @@ onMounted(() => {
       maxZoom: 20
     }).addTo(leafletMap)
 
+    waterLevelLayer = new WebGPULayer()
+    waterLevelLayer.addTo(leafletMap)
+
     gpuLayer = new WebGPULayer()
     gpuLayer.addTo(leafletMap)
     
@@ -560,10 +605,12 @@ onMounted(() => {
     
     const canvas = gpuLayer.getCanvas()
     const pCanvas = particleLayer.getCanvas()
+    const wCanvas = waterLevelLayer.getCanvas()
     
-    if (canvas && pCanvas) {
+    if (canvas && pCanvas && wCanvas) {
       canvas.style.mixBlendMode = 'screen'
       pCanvas.style.mixBlendMode = 'screen'
+      wCanvas.style.mixBlendMode = 'normal'
       
       initWebGPU().then(async (c) => {
         core = c
@@ -576,7 +623,11 @@ onMounted(() => {
         const pContext = pCanvas.getContext('webgpu') as GPUCanvasContext
         pContext.configure({ device: core.device, format: core.format, alphaMode: 'premultiplied' })
 
+        const wContext = wCanvas.getContext('webgpu') as GPUCanvasContext
+        wContext.configure({ device: core.device, format: core.format, alphaMode: 'premultiplied' })
+
         // Initialize modules with shared textures
+        await waterLevel.init(core, sharedResources.textures, wContext)
         await flow.init(core, sharedResources.textures, context)
         await particles.init(core, sharedResources.textures, pContext, 65536)
 
@@ -584,8 +635,10 @@ onMounted(() => {
         ;(window as any).gpuCore = core
         ;(window as any).gpuLayer = gpuLayer
         ;(window as any).particleLayer = particleLayer
+        ;(window as any).waterLevelLayer = waterLevelLayer
         ;(window as any).flow = flow
         ;(window as any).particles = particles
+        ;(window as any).waterLevel = waterLevel
         ;(window as any).gpuParams = gpuParams
 
         gpuParams.aspect = canvas.width / canvas.height
@@ -595,6 +648,8 @@ onMounted(() => {
         canvas.style.cursor = 'default'
         pCanvas.style.pointerEvents = 'none'
         pCanvas.style.cursor = 'default'
+        wCanvas.style.pointerEvents = 'none'
+        wCanvas.style.cursor = 'default'
         
         startLoop()
         await fetchModels()
@@ -731,6 +786,10 @@ function startLoop() {
       let texturesChanged = false;
       if (currentSourceType.value === 'video' && videoElement.value && videoElement.value.readyState >= 2) {
         if (videoElement.value.paused) videoElement.value.play().catch(() => {})
+        const targetRate = selectedModel.value?.uv?.playback_rate ?? selectedModel.value?.playback_rate ?? 1.0;
+        if (videoElement.value.playbackRate !== targetRate) {
+          videoElement.value.playbackRate = targetRate;
+        }
         if (sharedResources.updateUVTexture(videoElement.value, gpuParams.flipv > 0.5)) {
           texturesChanged = true;
         }
@@ -758,6 +817,7 @@ function startLoop() {
       }
     }
     
+    waterLevel.render(gpuParams)
     flow.render(gpuParams)
     particles.render(gpuParams, 0.005)
 
@@ -869,6 +929,7 @@ onUnmounted(() => {
             <SidebarSettings
               v-if="sidebarOpen"
               :models-list="modelsList"
+              :selected-model="selectedModel"
               :all-predictors="allPredictors"
               :all-correctors="allCorrectors"
               v-model:selected-predictor-id="selectedPredictorId"
@@ -908,9 +969,6 @@ onUnmounted(() => {
           <span class="text-[8px] font-bold uppercase tracking-tighter" :class="isHoldActive ? 'text-white' : 'text-slate-400'">Hold to Paint</span>
         </button>
       </div>
-
-      <!-- Bottom Panel (Domain Details) -->
-      <DomainDetails :selected-model="selectedModel" />
 
     </div>
   </div>

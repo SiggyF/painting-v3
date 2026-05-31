@@ -5,7 +5,15 @@ struct Params {
     mouseDirX: f32, mouseDirY: f32, uvScale: f32, flipv: f32,
     mouseRadius: f32, decay: f32, viscosity: f32, scheme: f32,
     activeColor: vec3<f32>, analytical: f32,
+    channelU: f32, channelV: f32, channelMask: f32, channelWater: f32,
 };
+
+fn get_channel_value(color: vec4<f32>, channel_idx: f32) -> f32 {
+    if (channel_idx < 0.5) { return color.r; }
+    if (channel_idx < 1.5) { return color.g; }
+    if (channel_idx < 2.5) { return color.b; }
+    return color.a;
+}
 
 @group(0) @binding(3) var uvSampler: sampler;
 @group(0) @binding(4) var uvTex: texture_2d<f32>;
@@ -56,7 +64,10 @@ fn getVelocity(uv: vec2<f32>, time: f32, p: Params) -> vec2<f32> {
         // 1. Sample from Video/Image UV Texture
         var sampleUV = uv;
         
-        let uvData = textureSample(uvTex, uvSampler, sampleUV).rg;
+        let uvSample = textureSample(uvTex, uvSampler, sampleUV);
+        let uVal = get_channel_value(uvSample, p.channelU);
+        let vVal = get_channel_value(uvSample, p.channelV);
+        let uvData = vec2<f32>(uVal, vVal);
         var vVideo = (uvData - 0.5) * p.uvScale;
         if (p.flipv > 0.5) {
             vVideo.y = -vVideo.y;
@@ -177,9 +188,16 @@ fn processAdvectedState(uv: vec2<f32>, advectedState: vec4<f32>) -> vec4<f32> {
     // Apply model decay
     concentration *= params.decay;
 
-    // Masking using the blue channel of the UV source texture
-    let mask = textureSample(uvTex, uvSampler, uv).b;
-    if (mask > 0.01) {
+    // Masking using the configured mask channel
+    let mask_sample = textureSample(uvTex, uvSampler, uv);
+    let raw_mask = get_channel_value(mask_sample, params.channelMask);
+    var is_land = 0.0;
+    if (params.channelMask > 2.5) {
+        is_land = 1.0 - raw_mask;
+    } else {
+        is_land = raw_mask;
+    }
+    if (is_land > 0.5) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
@@ -222,8 +240,15 @@ fn render_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     let s = textureSample(stateTex, samp, uv);
 
     var sampleUV = uv;
-    let mask = textureSample(uvTex, uvSampler, sampleUV).b;
-    if (mask > 0.01) {
+    let mask_sample = textureSample(uvTex, uvSampler, sampleUV);
+    let raw_mask = get_channel_value(mask_sample, params.channelMask);
+    var is_land = 0.0;
+    if (params.channelMask > 2.5) {
+        is_land = 1.0 - raw_mask;
+    } else {
+        is_land = raw_mask;
+    }
+    if (is_land > 0.5) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 

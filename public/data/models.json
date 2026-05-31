@@ -11,12 +11,13 @@
                 "tag": "video",
                 "width": 2048,
                 "height": 2048,
+                "playback_rate": 0.25,
                 "channels": {"r": "u", "g": "v", "b": "waterlevel", "a": "mask"}
             },
             "uniforms": {
                 "flipv": true,
                 "scale": 1.0,
-                "decay": 1.0
+                "decay": 0.998
             },
             "extent": {
                 "sw": [
@@ -63,7 +64,7 @@
             "uniforms": {
                 "flipv": true,
                 "scale": 2.0,
-                "decay": 1.0
+                "decay": 0.998
             },
             "extent": {
                 "sw": [49.264198303222656, -3.877345323562622],
@@ -92,7 +93,7 @@
             "uniforms": {
                 "flipv": true,
                 "scale": 5.0,
-                "decay": 1.0
+                "decay": 0.998
             },
             "extent": {
                 "sw": [52.498012542723586, 4.026927471160947],
@@ -121,7 +122,7 @@
             "uniforms": {
                 "flipv": true,
                 "scale": 5.0,
-                "decay": 1.0
+                "decay": 0.998
             },
             "extent": {
 
@@ -150,7 +151,7 @@
             "uniforms": {
                 "flipv": true,
                 "scale": 5.0,
-                "decay": 1.0
+                "decay": 0.998
             },
             "extent": {
                 "sw": [37.4487848675731, -123.09234894317646],
@@ -177,7 +178,7 @@
             "uniforms": {
                 "scale": 3,
                 "flipv": true,
-                "decay": 1.0
+                "decay": 0.998
             },
             "extent": {
                 "sw": [ 26.064999, -30.868795],
@@ -207,7 +208,7 @@
             "uniforms": {
                 "flipv": true,
                 "scale": 2,
-                "decay": 1.0
+                "decay": 0.998
             },
             "extent": {
                 "sw": [-38, 24],
@@ -237,7 +238,7 @@
             },
             "uniforms": {
                 "flipv": false,
-                "decay": 1.0,
+                "decay": 0.998,
                 "scale": 10.0
             },
             "extent": {
@@ -268,7 +269,7 @@
             },
             "uniforms": {
                 "flipv": false,
-                "decay": 1.0,
+                "decay": 0.998,
                 "scale": 1.0
             },
             "extent": {
@@ -296,7 +297,7 @@
             },
             "uniforms": {
                 "flipv": false,
-                "decay": 1.0,
+                "decay": 0.998,
                 "scale": 1.0
             },
             "extent": {

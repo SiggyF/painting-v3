@@ -50,8 +50,8 @@ export function useParticles() {
 
       uvSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
       
-      // time, speed, aspect, flipv, uvScale, dt, particleSize, particleOpacity
-      uniformBuf = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      // time, speed, aspect, flipv, uvScale, dt, particleSize, particleOpacity, colormapId, channelU, channelV, channelMask, channelWater
+      uniformBuf = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
       createBindGroups();
 
@@ -150,7 +150,7 @@ export function useParticles() {
 
   function resize(w: number, h: number) {
     if (!core) return;
-    const { device, format } = core;
+    const { device } = core;
     
     // Standardize bounds and fail fast on invalid dimensions
     const roundedW = Math.max(1, Math.floor(w));
@@ -212,16 +212,21 @@ export function useParticles() {
       return;
     }
 
-    // Update uniforms
+    // Update uniforms (20 floats = 80 bytes)
     const uniformData = new Float32Array([
       params.time, params.speed, params.aspect, params.flipv,
       params.uvScale, dt,
       params.particleSize ?? 0.003, params.particleOpacity ?? 0.25,
-      params.particleColorMode ?? 0.0,
-      params.particleColorR ?? 1.0,
-      params.particleColorG ?? 1.0,
-      params.particleColorB ?? 1.0,
-      params.particleColormapId ?? 0.0, 0.0, 0.0, 0.0
+      params.particleColorMode ?? 2.0,
+      params.particleColorR ?? (110 / 255),
+      params.particleColorG ?? (212 / 255),
+      params.particleColorB ?? (210 / 255),
+      params.particleColormapId ?? 0.0,
+      params.channelU ?? 0.0,
+      params.channelV ?? 1.0,
+      params.channelMask ?? 2.0,
+      params.channelWater ?? -1.0,
+      0.0, 0.0, 0.0 // Padding
     ]);
     device.queue.writeBuffer(uniformBuf, 0, uniformData);
 
@@ -240,6 +245,36 @@ export function useParticles() {
 
     const canvasView = context.getCurrentTexture().createView();
     const hasTrail = params.particleTrail && params.particleTrail > 0.0;
+
+    // Check if particles layer is enabled
+    if (params.particlesEnabled === false) {
+      // Clear the canvas view
+      const rp = commandEncoder.beginRenderPass({
+        colorAttachments: [{
+          view: canvasView,
+          loadOp: 'clear',
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          storeOp: 'store'
+        }]
+      });
+      rp.end();
+
+      // Clear accumulation texture if trails are active to prevent old trails bleeding on re-enable
+      if (hasTrail && particleAccumView) {
+        const accumRp = commandEncoder.beginRenderPass({
+          colorAttachments: [{
+            view: particleAccumView,
+            loadOp: 'clear',
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            storeOp: 'store'
+          }]
+        });
+        accumRp.end();
+      }
+
+      device.queue.submit([commandEncoder.finish()]);
+      return;
+    }
 
     if (hasTrail) {
       // Ensure accumulation texture is resized and created

@@ -198,7 +198,11 @@ export function useWebGPU() {
       params.noiseScale, params.mouseX, params.mouseY, params.isDrawing,
       params.mouseDirX, params.mouseDirY, params.uvScale, params.flipv,
       params.mouseRadius, params.decay, params.viscosity, params.scheme,
-      activeColor.value[0], activeColor.value[1], activeColor.value[2], params.analytical || 0.0
+      activeColor.value[0], activeColor.value[1], activeColor.value[2], params.analytical || 0.0,
+      params.channelU ?? 0.0,
+      params.channelV ?? 1.0,
+      params.channelMask ?? 2.0,
+      params.channelWater ?? -1.0
     ]);
     device.queue.writeBuffer(uniformBuf, 0, uniformData);
 
@@ -265,17 +269,20 @@ export function useWebGPU() {
 
     // 4. Final Render
     if (context) {
+      const enabled = params.paintingEnabled !== false;
       const rp = commandEncoder.beginRenderPass({
         colorAttachments: [{
           view: context.getCurrentTexture().createView(),
           loadOp: 'clear',
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          clearValue: { r: 0, g: 0, b: 0, a: enabled ? 1.0 : 0.0 },
           storeOp: 'store'
         }]
       });
-      rp.setPipeline(pipes.render);
-      rp.setBindGroup(0, renderBGs[(stateIdx + 1) % 2]);
-      rp.draw(3);
+      if (enabled) {
+        rp.setPipeline(pipes.render);
+        rp.setBindGroup(0, renderBGs[(stateIdx + 1) % 2]);
+        rp.draw(3);
+      }
       rp.end();
     }
 

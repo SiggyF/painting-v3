@@ -21,7 +21,8 @@ const categories = [
   {
     title: 'UI Controls',
     items: [
-      { key: 'S', action: 'Toggle Sidebar' }
+      { key: 'S', action: 'Toggle Sidebar' },
+      { key: 'D', action: 'Run WebGPU Diagnostics' }
     ]
   }
 ]
