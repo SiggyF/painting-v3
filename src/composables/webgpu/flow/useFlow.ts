@@ -357,14 +357,16 @@ export function useWebGPU() {
     createBindGroups,
     updateUVTexture: (source: any, flipY = false) => {
       if (localSharedResources) {
-        localSharedResources.updateUVTexture(source, flipY);
-        createBindGroups();
+        if (localSharedResources.updateUVTexture(source, flipY)) {
+          createBindGroups();
+        }
       }
     },
     updatePaintTexture: (source: HTMLCanvasElement) => {
       if (localSharedResources) {
-        localSharedResources.updatePaintTexture(source);
-        createBindGroups();
+        if (localSharedResources.updatePaintTexture(source)) {
+          createBindGroups();
+        }
       }
     },
     clearTextures: () => clearAllTextures(core.device, textures),

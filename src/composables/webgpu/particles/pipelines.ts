@@ -11,7 +11,8 @@ export interface ParticlePipelines {
 export function createParticlePipelines(
   device: GPUDevice,
   shaderModule: GPUShaderModule,
-  format: GPUTextureFormat
+  format: GPUTextureFormat,
+  accumFormat: GPUTextureFormat = 'rgba16float'
 ): ParticlePipelines {
   const vertexBufferLayout: GPUVertexBufferLayout = {
     arrayStride: 32, // 32 bytes per particle
@@ -81,12 +82,12 @@ export function createParticlePipelines(
     label: 'Particle Copy Bind Group Layout',
     entries: [
       {
-        binding: 0,
+        binding: 4,
         visibility: GPUShaderStage.FRAGMENT,
         texture: { sampleType: 'float' }
       },
       {
-        binding: 1,
+        binding: 5,
         visibility: GPUShaderStage.FRAGMENT,
         sampler: { type: 'filtering' }
       }
@@ -133,16 +134,16 @@ export function createParticlePipelines(
       entryPoint: 'fragment_main',
       targets: [
         {
-          format,
+          format: accumFormat,
           blend: {
             color: {
               srcFactor: 'one',
-              dstFactor: 'one-minus-src-alpha',
+              dstFactor: 'one',
               operation: 'add',
             },
             alpha: {
               srcFactor: 'one',
-              dstFactor: 'one-minus-src-alpha',
+              dstFactor: 'one',
               operation: 'add',
             },
           },
@@ -167,7 +168,7 @@ export function createParticlePipelines(
       entryPoint: 'fade_fragment_main',
       targets: [
         {
-          format,
+          format: accumFormat,
           blend: {
             color: {
               srcFactor: 'zero',

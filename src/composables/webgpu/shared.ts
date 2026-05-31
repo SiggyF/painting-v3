@@ -9,6 +9,9 @@ export interface SharedTextures {
 export function useSharedResources(core: GPUCore) {
   const { device } = core;
 
+  let uvW = 1, uvH = 1;
+  let paintW = 1, paintH = 1;
+
   // Create initial dummy 1x1 textures to avoid null references
   const dummyUV = device.createTexture({
     size: [1, 1],
@@ -27,20 +30,23 @@ export function useSharedResources(core: GPUCore) {
     paint: dummyPaint
   });
 
-  function updateUVTexture(source: any, flipY: boolean = false) {
-    if (!core) return;
+  function updateUVTexture(source: any, flipY: boolean = false): boolean {
+    if (!core) return false;
     const { device } = core;
 
-    if (typeof HTMLVideoElement !== 'undefined' && source instanceof HTMLVideoElement && source.readyState < 2) return;
+    if (typeof HTMLVideoElement !== 'undefined' && source instanceof HTMLVideoElement && source.readyState < 2) return false;
 
     let width = source.videoWidth || source.naturalWidth || source.width;
     let height = source.videoHeight || source.naturalHeight || source.height;
-    if (width <= 0 || height <= 0) return;
+    if (width <= 0 || height <= 0) return false;
 
     let uvTexture = textures.value?.uv;
+    let recreated = false;
 
-    if (!uvTexture || uvTexture.width !== width || uvTexture.height !== height) {
+    if (!uvTexture || uvW !== width || uvH !== height) {
       if (uvTexture) uvTexture.destroy();
+      uvW = width; uvH = height;
+      recreated = true;
       uvTexture = device.createTexture({
         size: [width, height], format: 'rgba8unorm',
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
@@ -55,19 +61,23 @@ export function useSharedResources(core: GPUCore) {
       };
     }
     device.queue.copyExternalImageToTexture({ source, flipY }, { texture: uvTexture }, [width, height]);
+    return recreated;
   }
 
-  function updatePaintTexture(source: HTMLCanvasElement) {
-    if (!core) return;
+  function updatePaintTexture(source: HTMLCanvasElement): boolean {
+    if (!core) return false;
     const { device } = core;
     const width = source.width;
     const height = source.height;
-    if (width <= 0 || height <= 0) return;
+    if (width <= 0 || height <= 0) return false;
 
     let paintTexture = textures.value?.paint;
+    let recreated = false;
 
-    if (!paintTexture || paintTexture.width !== width || paintTexture.height !== height) {
+    if (!paintTexture || paintW !== width || paintH !== height) {
       if (paintTexture) paintTexture.destroy();
+      paintW = width; paintH = height;
+      recreated = true;
       paintTexture = device.createTexture({
         size: [width, height], format: 'rgba8unorm',
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
@@ -78,6 +88,7 @@ export function useSharedResources(core: GPUCore) {
       };
     }
     device.queue.copyExternalImageToTexture({ source, flipY: false }, { texture: paintTexture }, [width, height]);
+    return recreated;
   }
 
   return {

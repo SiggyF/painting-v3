@@ -48,10 +48,15 @@ fn compute_main(@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>) {
   p.life -= uniforms.dt * 0.5; // Arbitrary life span decay
   
   // Sample UV video for velocity and mask
-  let uv = p.pos;
+  var uv = p.pos;
+  // Safety: Ensure UV is within valid range to avoid edge-case NaNs
+  uv = saturate(uv);
   
   let vel_raw = textureSampleLevel(uvTex, uvSampler, uv, 0.0);
-  let mask = vel_raw.z; // Blue channel of UV video texture contains the land mask
+  
+  // Safety: Detect if texture data is NaN or Infinity
+  var mask = vel_raw.z;
+  if (mask != mask || mask > 10.0) { mask = 0.0; }
 
   if (p.life <= 0.0 || mask > 0.01) {
     // Respawn particle randomly
@@ -61,7 +66,11 @@ fn compute_main(@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>) {
     p.life = 1.0;
     p.vel = vec2<f32>(0.0, 0.0);
   } else {
-    var vel = (vel_raw.xy - vec2<f32>(0.5, 0.5)) * uniforms.uvScale * uniforms.speed;
+    var v_raw = vel_raw.xy;
+    // Safety: If texture sample is NaN, default to zero
+    if (any(v_raw != v_raw)) { v_raw = vec2<f32>(0.5, 0.5); }
+
+    var vel = (v_raw - vec2<f32>(0.5, 0.5)) * uniforms.uvScale * uniforms.speed;
     if (uniforms.flipv > 0.5) {
       vel.y = -vel.y;
     }
@@ -70,6 +79,14 @@ fn compute_main(@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>) {
 
     // Advect particle
     p.pos += p.vel * uniforms.dt * vec2<f32>(1.0 / uniforms.aspect, 1.0);
+
+
+    // Safety: check for NaN and reset if poisoned
+    if (any(p.pos != p.pos) || any(p.vel != p.vel)) {
+        p.pos = vec2<f32>(0.5, 0.5);
+        p.vel = vec2<f32>(0.0, 0.0);
+        p.life = 0.0;
+    }
 
     // Wrap around boundaries (or bounce)
     if (p.pos.x < 0.0) { p.pos.x += 1.0; }
@@ -264,24 +281,31 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
     discard; // Cut off corners to form a perfect circle
   }
 
-  // Sharp anti-aliased circular particles to prevent trail bloating
-  let intensity = 1.0 - smoothstep(0.8, 1.0, r);
+  // Combined sharp core + soft glow for better visibility and anti-aliasing
+  let sharp_mask = smoothstep(1.0, 0.9, r);
+  let glow = exp(-3.0 * r * r);
+  let intensity = (sharp_mask * 0.5 + glow * 0.5) * 1.5; // Boosted intensity
 
   let speed = length(in.vel);
   var color: vec3<f32>;
 
   if (uniforms.particleColorMode < 0.5) {
     // Direction based (color wheel)
-    let angle = atan2(in.vel.y, in.vel.x);
-    let hue = (angle + 3.14159265359) / (2.0 * 3.14159265359);
-    var wheelColor: vec3<f32>;
-    if (uniforms.particleColormapId < 0.5) {
-      wheelColor = romaO(hue);
-    } else {
-      wheelColor = oleron(hue);
+    var wheelColor: vec3<f32> = vec3<f32>(0.7, 0.7, 0.7);
+    let speed_sq = dot(in.vel, in.vel);
+    
+    if (speed_sq > 1e-9) {
+      let angle = atan2(in.vel.y, in.vel.x);
+      let hue = (angle + 3.14159265359) / (2.0 * 3.14159265359);
+      if (uniforms.particleColormapId < 0.5) {
+        wheelColor = romaO(hue);
+      } else {
+        wheelColor = oleron(hue);
+      }
     }
+    
     // Blend stationary/slow particles to a neutral white-grey
-    let speed_factor = clamp(speed * 30.0, 0.0, 1.0);
+    let speed_factor = clamp(sqrt(speed_sq) * 30.0, 0.0, 1.0);
     color = mix(vec3<f32>(0.7, 0.7, 0.7), wheelColor, speed_factor);
   } else if (uniforms.particleColorMode < 1.5) {
     // Speed based (sequential colormap)
@@ -334,8 +358,8 @@ fn fade_fragment_main() -> @location(0) vec4<f32> {
   return vec4<f32>(0.0);
 }
 
-@group(0) @binding(0) var accumTex: texture_2d<f32>;
-@group(0) @binding(1) var accumSampler: sampler;
+@group(0) @binding(4) var accumTex: texture_2d<f32>;
+@group(0) @binding(5) var accumSampler: sampler;
 
 @fragment
 fn screen_fragment_main(in: ScreenVertexOutput) -> @location(0) vec4<f32> {

@@ -128,7 +128,7 @@
       },
       "uniforms": {
         "scale": 3,
-        "flipv": false,
+        "flipv": true,
         "decay": 1.0
       },
       "extent": {

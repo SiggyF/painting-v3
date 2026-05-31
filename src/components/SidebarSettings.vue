@@ -60,11 +60,16 @@ const filteredCorrectors = computed(() => {
 
 const particleExponent = computed({
   get: () => {
-    const count = props.gpuParams.particleCount || 512;
-    return Math.round(Math.log2(count));
+    const count = props.gpuParams.particleCount;
+    if (count === 0) return 0;
+    return Math.round(Math.log2(count || 512));
   },
   set: (val) => {
-    props.gpuParams.particleCount = Math.pow(2, val);
+    if (val === 0) {
+      props.gpuParams.particleCount = 0;
+    } else {
+      props.gpuParams.particleCount = Math.pow(2, val);
+    }
   }
 })
 
@@ -190,9 +195,24 @@ const particleConstantColorHex = computed({
         </div>
 
         <!-- 2. Particle Controls (count, opacity, trail) -->
+        <!-- 4. Particle Layer -->
         <div class="pt-4 border-t border-white/5">
-          <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Particle Controls</h2>
+          <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Particle Layer</h2>
           <div class="space-y-4">
+            <!-- Particle Size -->
+            <div>
+              <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
+                <span>Particle Size</span>
+                <span class="text-sky-400">{{ (gpuParams.particleSize * 1000).toFixed(1) }}</span>
+              </div>
+              <input 
+                type="range" 
+                v-model.number="gpuParams.particleSize" 
+                min="0.001" max="0.01" step="0.0005"
+                class="w-full"
+              >
+            </div>
+
             <!-- Particle Count -->
             <div>
               <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
@@ -202,11 +222,10 @@ const particleConstantColorHex = computed({
               <input 
                 type="range" 
                 v-model.number="particleExponent" 
-                min="6" max="16" step="1"
+                min="0" max="18" step="1"
                 class="w-full"
               >
             </div>
-
             <!-- Particle Opacity -->
             <div>
               <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
@@ -375,26 +394,6 @@ const particleConstantColorHex = computed({
                 type="range" 
                 v-model.number="gpuParams.viscosity" 
                 min="0.0" max="1.0" step="0.01"
-                class="w-full"
-              >
-            </div>
-          </div>
-        </div>
-
-        <!-- 6. Other Particle Settings (Particle Size) -->
-        <div class="pt-4 border-t border-white/5">
-          <h2 class="text-[10px] font-bold uppercase text-slate-500 tracking-[0.15em] mb-4">Other Particle Settings</h2>
-          <div class="space-y-4">
-            <!-- Particle Size -->
-            <div>
-              <div class="flex justify-between text-[11px] mb-2 text-slate-400 font-mono">
-                <span>Particle Size</span>
-                <span class="text-sky-400">{{ (gpuParams.particleSize * 1000).toFixed(1) }}</span>
-              </div>
-              <input 
-                type="range" 
-                v-model.number="gpuParams.particleSize" 
-                min="0.001" max="0.01" step="0.0005"
                 class="w-full"
               >
             </div>

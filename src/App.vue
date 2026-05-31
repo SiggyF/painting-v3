@@ -12,7 +12,7 @@ import InstructionCard from './components/InstructionCard.vue'
 import SidebarSettings from './components/SidebarSettings.vue'
 import DomainDetails from './components/DomainDetails.vue'
 
-const selectedPredictorId = ref('bilinear')
+const selectedPredictorId = ref('bicubic')
 const selectedCorrectorId = ref('none')
 const allPredictors = ref<any[]>([])
 const allCorrectors = ref<any[]>([])
@@ -82,13 +82,34 @@ const getStats = flow.getStats
 
 const updatePaintTexture = (source: HTMLCanvasElement) => {
   if (sharedResources) {
-    sharedResources.updatePaintTexture(source)
-    flow.createBindGroups()
-    particles.rebind()
+    if (sharedResources.updatePaintTexture(source)) {
+      flow.createBindGroups()
+      particles.rebind()
+    }
   }
 }
 
 const compileAdvectPipeline = flow.compileAdvectPipeline
+
+const handleMapClick = async (e: any) => {
+  if (e.originalEvent.shiftKey) {
+    const latlng = e.latlng
+    // Convert latlng to container pixels
+    const point = leafletMap!.latLngToContainerPoint(latlng)
+    
+    // Convert container pixels to simulation pixels (accounting for DPR and potential scaling)
+    const canvas = gpuLayer.getCanvas()
+    if (!canvas) return
+    
+    const rect = canvas.getBoundingClientRect()
+    const x = (point.x) * (canvas.width / rect.width)
+    const y = (point.y) * (canvas.height / rect.height)
+    
+    console.log(`Inspecting Particle Accumulation at (${Math.round(x)}, ${Math.round(y)})...`)
+    const values = await particles.inspectPixel(x, y)
+    console.log("RGBA Float16 Values:", values)
+  }
+}
 
 const filteredCorrectors = computed(() => {
   return allCorrectors.value.filter(c => c.compatiblePredictors.includes(selectedPredictorId.value))
@@ -144,7 +165,7 @@ onMounted(async () => {
     presetsList.value = data.presets || []
     
     // Set initial values
-    selectedPredictorId.value = 'bilinear'
+    selectedPredictorId.value = 'bicubic'
     selectedCorrectorId.value = 'none'
   } catch (err) {
     console.error('Error loading schemes catalog:', err)
@@ -166,6 +187,7 @@ const updateMapInteraction = (drawing: boolean) => {
   if (leafletMap && canvas) {
     if (drawing) {
       leafletMap.dragging.disable()
+      leafletMap.touchZoom.disable()
       leafletMap.scrollWheelZoom.disable()
       leafletMap.doubleClickZoom.disable()
       leafletMap.boxZoom.disable()
@@ -173,6 +195,7 @@ const updateMapInteraction = (drawing: boolean) => {
       canvas.style.cursor = 'crosshair'
     } else {
       leafletMap.dragging.enable()
+      leafletMap.touchZoom.enable()
       leafletMap.scrollWheelZoom.enable()
       leafletMap.doubleClickZoom.enable()
       leafletMap.boxZoom.enable()
@@ -265,7 +288,7 @@ const drawToPaintCanvas = (nx: number, ny: number) => {
   lastMousePos.y = ny
 }
 
-const handleMouseDown = (e: MouseEvent) => {
+const handleMouseDown = (e: MouseEvent | TouchEvent) => {
   // Classic drag painting (if mode active)
   if (drawingActive.value) {
     gpuParams.isDrawing = 1.0
@@ -273,7 +296,7 @@ const handleMouseDown = (e: MouseEvent) => {
   }
 }
 
-const handleMouseMove = (e: MouseEvent) => {
+const handleMouseMove = (e: MouseEvent | TouchEvent) => {
   const seamless = isShiftPressed.value || isHoldActive.value
   const drawing = drawingActive.value || seamless
   
@@ -285,8 +308,18 @@ const handleMouseMove = (e: MouseEvent) => {
     const canvas = gpuLayer?.getCanvas()
     if (canvas) {
       const rect = canvas.getBoundingClientRect()
-      const nx = (e.clientX - rect.left) / rect.width
-      const ny = (e.clientY - rect.top) / rect.height
+      
+      let clientX, clientY;
+      if ('touches' in e) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+      } else {
+        clientX = e.clientX;
+        clientY = e.clientY;
+      }
+
+      const nx = (clientX - rect.left) / rect.width
+      const ny = (clientY - rect.top) / rect.height
       drawToPaintCanvas(nx, ny)
     }
     
@@ -308,15 +341,24 @@ const handleMouseMove = (e: MouseEvent) => {
 }
 
 
-const updateMousePosition = (e: MouseEvent) => {
+const updateMousePosition = (e: MouseEvent | TouchEvent) => {
   const canvas = gpuLayer?.getCanvas()
   if (canvas) {
     const rect = canvas.getBoundingClientRect()
     
     if (rect.width <= 0 || rect.height <= 0) return
 
-    const nx = (e.clientX - rect.left) / rect.width
-    const ny = (e.clientY - rect.top) / rect.height
+    let clientX, clientY;
+    if ('touches' in e) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    }
+
+    const nx = (clientX - rect.left) / rect.width
+    const ny = (clientY - rect.top) / rect.height
     
     if (gpuParams.mouseX !== -1.0) {
       gpuParams.mouseDirX = nx - gpuParams.mouseX
@@ -420,7 +462,7 @@ const gpuParams = reactive<GPUParams>({
   mouseDirY: 0.0,
   uvScale: 1.6,
   flipv: 1.0,
-  mouseRadius: 0.005,
+  mouseRadius: 0.002,
   decay: 0.98,
   viscosity: 0.0,
   scheme: 0.0,
@@ -556,16 +598,24 @@ onMounted(() => {
         
         startLoop()
         await fetchModels()
+        leafletMap!.on('click', handleMapClick)
       })
 
       window.addEventListener('mousedown', handleMouseDown)
       window.addEventListener('mousemove', handleMouseMove)
       window.addEventListener('mouseup', handleMouseUp)
+      
+      window.addEventListener('touchstart', handleMouseDown, { passive: false })
+      window.addEventListener('touchmove', handleMouseMove, { passive: false })
+      window.addEventListener('touchend', handleMouseUp)
 
       window.addEventListener('keydown', (e: KeyboardEvent) => {
         if (e.shiftKey && !isShiftPressed.value) {
           isShiftPressed.value = true
           updateMapInteraction(true)
+        }
+        if (e.key.toLowerCase() === 'd') {
+          particles.runDiagnostics()
         }
         if (e.key.toLowerCase() === 'c') {
           console.log('Interaction: Clear Canvas')
@@ -678,26 +728,35 @@ function startLoop() {
     }
 
     if (sharedResources) {
+      let texturesChanged = false;
       if (currentSourceType.value === 'video' && videoElement.value && videoElement.value.readyState >= 2) {
         if (videoElement.value.paused) videoElement.value.play().catch(() => {})
-        sharedResources.updateUVTexture(videoElement.value, gpuParams.flipv > 0.5)
+        if (sharedResources.updateUVTexture(videoElement.value, gpuParams.flipv > 0.5)) {
+          texturesChanged = true;
+        }
         
         // Update reactive progress for clock
         if (videoElement.value.duration > 0) {
           videoProgress.value = videoElement.value.currentTime / videoElement.value.duration
         }
       } else if (currentSourceType.value === 'image' && imageElement.value && imageElement.value.complete) {
-        sharedResources.updateUVTexture(imageElement.value, gpuParams.flipv > 0.5)
+        if (sharedResources.updateUVTexture(imageElement.value, gpuParams.flipv > 0.5)) {
+          texturesChanged = true;
+        }
         videoProgress.value = (gpuParams.time % 10.0) / 10.0 // Loop dummy progress for static images
       }
 
       // Upload 2D paint canvas to WebGPU
-      sharedResources.updatePaintTexture(paintCanvas)
-    }
+      if (sharedResources.updatePaintTexture(paintCanvas)) {
+        texturesChanged = true;
+      }
 
-    // Since updateUVTexture might recreate textures on resize, rebind pipelines if necessary
-    flow.createBindGroups()
-    particles.rebind()
+      // Since updateUVTexture might recreate textures on resize, rebind pipelines if necessary
+      if (texturesChanged) {
+        flow.createBindGroups()
+        particles.rebind()
+      }
+    }
     
     flow.render(gpuParams)
     particles.render(gpuParams, 0.005)
@@ -739,6 +798,10 @@ onUnmounted(() => {
   window.removeEventListener('mousedown', handleMouseDown)
   window.removeEventListener('mousemove', handleMouseMove)
   window.removeEventListener('mouseup', handleMouseUp)
+  
+  window.removeEventListener('touchstart', handleMouseDown)
+  window.removeEventListener('touchmove', handleMouseMove)
+  window.removeEventListener('touchend', handleMouseUp)
 })
 </script>
 

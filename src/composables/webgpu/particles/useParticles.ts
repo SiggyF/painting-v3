@@ -69,8 +69,8 @@ export function useParticles() {
       copyBG = device.createBindGroup({
         layout: pipes.copyBindGroupLayout,
         entries: [
-          { binding: 0, resource: particleAccumView },
-          { binding: 1, resource: uvSampler }
+          { binding: 4, resource: particleAccumView },
+          { binding: 5, resource: uvSampler }
         ]
       });
     } catch (err) {
@@ -168,8 +168,8 @@ export function useParticles() {
     particleAccumTex = device.createTexture({
       label: 'Particle Trail Accumulation Texture',
       size: [width, height],
-      format,
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      format: 'rgba16float',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
     });
     particleAccumView = particleAccumTex.createView();
 
@@ -195,6 +195,17 @@ export function useParticles() {
     }
     const { device } = core;
 
+    const activeCount = Math.min(params.particleCount ?? 65536, buffers.particleCount);
+    if (activeCount <= 0) {
+      // If trails are active, we still need to fade and copy the background, 
+      // but if trails are off, we can skip everything.
+      if (!(params.particleTrail && params.particleTrail > 0.0)) {
+        // Clear canvas if needed (if this is the only layer drawing)
+        // But usually particles are additive over something else.
+        return;
+      }
+    }
+
     // Safety checks for bind groups to fail fast and log clear warnings
     if (!computeBG || !renderBG) {
       console.error("Skipping particle render: bind groups are not ready!", { computeBG: !!computeBG, renderBG: !!renderBG });
@@ -217,13 +228,15 @@ export function useParticles() {
 
     const commandEncoder = device.createCommandEncoder();
 
-    // 1. Compute Pass: Advect particles
-    const cp = commandEncoder.beginComputePass();
-    cp.setPipeline(pipes.compute);
-    cp.setBindGroup(0, computeBG);
-    const workgroupCount = Math.ceil(buffers.particleCount / 64);
-    cp.dispatchWorkgroups(workgroupCount);
-    cp.end();
+    // 1. Compute Pass: Advect particles (skip if count is 0)
+    if (activeCount > 0) {
+      const cp = commandEncoder.beginComputePass();
+      cp.setPipeline(pipes.compute);
+      cp.setBindGroup(0, computeBG);
+      const workgroupCount = Math.ceil(activeCount / 64);
+      cp.dispatchWorkgroups(workgroupCount);
+      cp.end();
+    }
 
     const canvasView = context.getCurrentTexture().createView();
     const hasTrail = params.particleTrail && params.particleTrail > 0.0;
@@ -250,12 +263,13 @@ export function useParticles() {
         rp.setBlendConstant([decay, decay, decay, decay]);
         rp.draw(3);
 
-        // Draw new particles with additive blending
-        rp.setPipeline(pipes.render);
-        rp.setBindGroup(0, renderBG);
-        rp.setVertexBuffer(0, buffers.particleBuffer);
-        const activeCount = Math.min(params.particleCount || 65536, buffers.particleCount);
-        rp.draw(6, activeCount);
+        // Draw new particles with additive blending (if any)
+        if (activeCount > 0) {
+          rp.setPipeline(pipes.render);
+          rp.setBindGroup(0, renderBG);
+          rp.setVertexBuffer(0, buffers.particleBuffer);
+          rp.draw(6, activeCount);
+        }
         rp.end();
 
         // 3a. Copy Pass: Render accumulation texture to canvas swapchain
@@ -282,15 +296,98 @@ export function useParticles() {
           storeOp: 'store'
         }]
       });
-      rp.setPipeline(pipes.render);
-      rp.setBindGroup(0, renderBG);
-      rp.setVertexBuffer(0, buffers.particleBuffer);
-      const activeCount = Math.min(params.particleCount || 65536, buffers.particleCount);
-      rp.draw(6, activeCount);
+      if (activeCount > 0) {
+        rp.setPipeline(pipes.render);
+        rp.setBindGroup(0, renderBG);
+        rp.setVertexBuffer(0, buffers.particleBuffer);
+        rp.draw(6, activeCount);
+      }
       rp.end();
     }
 
     device.queue.submit([commandEncoder.finish()]);
+  }
+
+  async function inspectPixel(x: number, y: number) {
+    if (!core || !particleAccumTex) return null;
+    const { device } = core;
+    
+    const readBuffer = device.createBuffer({
+      size: 16, // 4 floats (RGBA16float is 8 bytes, but let's read as float32 for simplicity or just 16 bytes)
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+    });
+
+    const commandEncoder = device.createCommandEncoder();
+    commandEncoder.copyTextureToBuffer(
+      { texture: particleAccumTex, origin: [Math.floor(x), Math.floor(y), 0] },
+      { buffer: readBuffer, bytesPerRow: 256 }, // bytesPerRow must be multiple of 256 for some operations, but for 1x1 it depends.
+      { width: 1, height: 1 }
+    );
+    device.queue.submit([commandEncoder.finish()]);
+
+    await readBuffer.mapAsync(GPUMapMode.READ);
+    const result = new Uint16Array(readBuffer.getMappedRange()); // It's rgba16float
+    const values = [
+      decodeFloat16(result[0]),
+      decodeFloat16(result[1]),
+      decodeFloat16(result[2]),
+      decodeFloat16(result[3])
+    ];
+    readBuffer.unmap();
+    readBuffer.destroy();
+    return values;
+  }
+
+  function decodeFloat16(h: number) {
+    const s = (h & 0x8000) >> 15;
+    const e = (h & 0x7C00) >> 10;
+    const f = h & 0x03FF;
+    if (e === 0) return (s ? -1 : 1) * Math.pow(2, -14) * (f / 1024);
+    if (e === 31) return f ? NaN : (s ? -Infinity : Infinity);
+    return (s ? -1 : 1) * Math.pow(2, e - 15) * (1 + f / 1024);
+  }
+
+  async function runDiagnostics() {
+    if (!core || !pipes || !particleAccumView) return;
+    const { device } = core;
+    console.log("Starting Particle Trail Diagnostic...");
+
+    // 1. Clear to opaque white
+    const commandEncoder = device.createCommandEncoder();
+    const rp = commandEncoder.beginRenderPass({
+      colorAttachments: [{
+        view: particleAccumView,
+        loadOp: 'clear',
+        clearValue: { r: 1, g: 1, b: 1, a: 1 },
+        storeOp: 'store'
+      }]
+    });
+    rp.end();
+    device.queue.submit([commandEncoder.finish()]);
+
+    // 2. Run fade 60 times with 0.95 decay
+    const decay = 0.95;
+    for (let i = 0; i < 60; i++) {
+      const enc = device.createCommandEncoder();
+      const fadeRp = enc.beginRenderPass({
+        colorAttachments: [{
+          view: particleAccumView,
+          loadOp: 'load',
+          storeOp: 'store'
+        }]
+      });
+      fadeRp.setPipeline(pipes.fade);
+      fadeRp.setBlendConstant([decay, decay, decay, decay]);
+      fadeRp.draw(3);
+      fadeRp.end();
+      device.queue.submit([enc.finish()]);
+    }
+
+    // 3. Inspect result
+    const values = await inspectPixel(0, 0);
+    console.log("Diagnostic Results (after 60 steps at 0.95 decay):", values);
+    const isZero = values?.every(v => v < 0.001);
+    console.log(isZero ? "✅ TEST PASSED: Trails fade to zero." : "❌ TEST FAILED: Trails are ghosting.");
   }
 
   return {
@@ -298,7 +395,11 @@ export function useParticles() {
     render,
     rebind,
     resize,
+    inspectPixel,
+    runDiagnostics,
     isInitialized,
     error
   };
 }
+
+
