@@ -12,6 +12,26 @@ export function useSharedResources(core: GPUCore) {
   let uvW = 1, uvH = 1;
   let paintW = 1, paintH = 1;
 
+  // Firefox does not accept an HTMLVideoElement as a copyExternalImageToTexture source
+  // (only ImageBitmap/HTMLImageElement/HTMLCanvasElement/OffscreenCanvas). When the direct
+  // video copy is rejected we draw the frame onto this 2D canvas and copy that instead.
+  let useVideoCanvasFallback = false;
+  let videoCanvas: HTMLCanvasElement | null = null;
+  let videoCtx: CanvasRenderingContext2D | null = null;
+
+  function videoFrameToCanvas(video: HTMLVideoElement, width: number, height: number): HTMLCanvasElement {
+    if (!videoCanvas) {
+      videoCanvas = document.createElement('canvas');
+      videoCtx = videoCanvas.getContext('2d');
+    }
+    if (videoCanvas.width !== width || videoCanvas.height !== height) {
+      videoCanvas.width = width;
+      videoCanvas.height = height;
+    }
+    videoCtx!.drawImage(video, 0, 0, width, height);
+    return videoCanvas;
+  }
+
   // Create initial dummy 1x1 textures to avoid null references
   const dummyUV = device.createTexture({
     size: [1, 1],
@@ -60,7 +80,21 @@ export function useSharedResources(core: GPUCore) {
         })
       };
     }
-    device.queue.copyExternalImageToTexture({ source, flipY }, { texture: uvTexture }, [width, height]);
+    const isVideo = typeof HTMLVideoElement !== 'undefined' && source instanceof HTMLVideoElement;
+    let copySource: any = isVideo && useVideoCanvasFallback ? videoFrameToCanvas(source, width, height) : source;
+    try {
+      device.queue.copyExternalImageToTexture({ source: copySource, flipY }, { texture: uvTexture }, [width, height]);
+    } catch (e) {
+      // Firefox rejects video elements here; retry once via an intermediate 2D canvas and
+      // keep using that path for subsequent frames.
+      if (isVideo && !useVideoCanvasFallback) {
+        useVideoCanvasFallback = true;
+        copySource = videoFrameToCanvas(source, width, height);
+        device.queue.copyExternalImageToTexture({ source: copySource, flipY }, { texture: uvTexture }, [width, height]);
+      } else {
+        throw e;
+      }
+    }
     return recreated;
   }
 
