@@ -85,9 +85,10 @@ export function useSharedResources(core: GPUCore) {
     try {
       device.queue.copyExternalImageToTexture({ source: copySource, flipY }, { texture: uvTexture }, [width, height]);
     } catch (e) {
-      // Firefox rejects video elements here; retry once via an intermediate 2D canvas and
-      // keep using that path for subsequent frames.
-      if (isVideo && !useVideoCanvasFallback) {
+      // Firefox rejects an unsupported source type with a synchronous TypeError (WebIDL
+      // union mismatch). Only that specific failure triggers the 2D-canvas fallback, so a
+      // transient/unrelated GPU error doesn't permanently switch us off the fast path.
+      if (isVideo && !useVideoCanvasFallback && e instanceof TypeError) {
         useVideoCanvasFallback = true;
         copySource = videoFrameToCanvas(source, width, height);
         device.queue.copyExternalImageToTexture({ source: copySource, flipY }, { texture: uvTexture }, [width, height]);
