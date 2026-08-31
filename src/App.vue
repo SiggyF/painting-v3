@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, reactive, onUnmounted, computed } from 'vue'
 import L from 'leaflet'
+import '@maplibre/maplibre-gl-leaflet'
 import { WebGPULayer } from './utils/WebGPULayer'
 import { initWebGPU, useSharedResources, useFlow, useParticles, useWaterLevel } from './composables/useWebGPU'
 import type { GPUCore } from './composables/useWebGPU'
@@ -589,9 +590,8 @@ onMounted(() => {
       attributionControl: false
     }).setView([53.4443, 5.6841], 11)
     
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      subdomains: 'abcd',
-      maxZoom: 20
+    L.maplibreGL({
+      style: 'https://tiles.openfreemap.org/styles/dark'
     }).addTo(leafletMap)
 
     waterLevelLayer = new WebGPULayer()
